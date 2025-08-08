@@ -539,6 +539,88 @@ class DatabaseManager:
         except Exception as e:
             raise Exception(f"Failed to get table data: {e}")
     
+    async def get_collection_info(self, schema: str, table: str, collection_id: str) -> Dict[str, Any]:
+        """Get information about a specific collection including vector dimensions"""
+        if not self.is_connected():
+            raise Exception("No database connection available")
+        
+        try:
+            async with self.get_connection() as conn:
+                # Get a sample vector from this collection to determine dimensions
+                sample_query = f'SELECT embedding FROM "{schema}"."{table}" WHERE collection_id = $1 LIMIT 1'
+                sample_row = await conn.fetchrow(sample_query, collection_id)
+                
+                if sample_row:
+                    embedding = sample_row['embedding']
+                    print(f"Debug: embedding type: {type(embedding)}")
+                    print(f"Debug: embedding value (first 100 chars): {str(embedding)[:100]}")
+                    
+                    # Handle different embedding storage formats
+                    dimensions = 0
+                    sample_values = []
+                    
+                    if isinstance(embedding, str):
+                        # If stored as string, parse it
+                        if embedding.startswith('[') and embedding.endswith(']'):
+                            # JSON array format
+                            try:
+                                import json
+                                parsed = json.loads(embedding)
+                                dimensions = len(parsed)
+                                sample_values = parsed[:5] if len(parsed) > 5 else parsed
+                            except:
+                                # Try comma-separated format
+                                embedding_clean = embedding.strip('[]')
+                                values = [float(x.strip()) for x in embedding_clean.split(',') if x.strip()]
+                                dimensions = len(values)
+                                sample_values = values[:5]
+                        else:
+                            # Try splitting by comma
+                            values = [float(x.strip()) for x in embedding.split(',') if x.strip()]
+                            dimensions = len(values)
+                            sample_values = values[:5]
+                    elif hasattr(embedding, '__len__'):
+                        # If it's a list or array-like object
+                        dimensions = len(embedding)
+                        sample_values = embedding[:5] if dimensions > 5 else embedding
+                    else:
+                        # Try to get dimensions from PostgreSQL vector type
+                        # Query the actual vector dimensions using PostgreSQL functions
+                        dim_query = f'SELECT array_length(embedding::float[], 1) as dimensions FROM "{schema}"."{table}" WHERE collection_id = $1 LIMIT 1'
+                        try:
+                            dim_row = await conn.fetchrow(dim_query, collection_id)
+                            dimensions = dim_row['dimensions'] if dim_row else 0
+                        except Exception as e:
+                            print(f"Debug: Failed to get dimensions via PostgreSQL: {e}")
+                            dimensions = 0
+                    
+                    print(f"Debug: detected dimensions: {dimensions}")
+                    
+                    # Get collection metadata from langchain_pg_collection if available
+                    try:
+                        collection_query = """
+                        SELECT name, cmetadata 
+                        FROM langchain_pg_collection 
+                        WHERE uuid = $1
+                        """
+                        collection_info = await conn.fetchrow(collection_query, collection_id)
+                        collection_name = collection_info['name'] if collection_info else f"Collection {collection_id[:8]}"
+                    except:
+                        collection_name = f"Collection {collection_id[:8]}"
+                    
+                    return {
+                        "collection_id": collection_id,
+                        "collection_name": collection_name,
+                        "vector_dimensions": dimensions,
+                        "sample_embedding": sample_values
+                    }
+                else:
+                    raise Exception(f"No vectors found for collection {collection_id}")
+                    
+        except Exception as e:
+            print(f"Debug: Error in get_collection_info: {e}")
+            raise Exception(f"Failed to get collection info: {str(e)}")
+
     async def search_table(
         self, 
         schema: str, 
@@ -556,13 +638,54 @@ class DatabaseManager:
         """Search table data with text or vector similarity (cosine/l2/ip)."""
         if not self.is_connected():
             raise Exception("No database connection available")
+        
+        # Debug: Print all input parameters
+        print(f"SEARCH DEBUG - Parameters received:")
+        print(f"  schema: {schema}")
+        print(f"  table: {table}")
+        print(f"  text_query: {text_query}")
+        print(f"  search_column: {search_column}")
+        print(f"  vector_column: {vector_column}")
+        print(f"  vector_query: {vector_query} (type: {type(vector_query)})")
+        print(f"  limit: {limit}")
+        print(f"  metric: {metric}")
+        print(f"  collection_id: {collection_id}")
+        
         try:
             async with self.get_connection() as conn:
                 where_conditions: List[str] = []
                 params: List[Any] = []
                 param_index = 0
 
-                base_query = f'SELECT * FROM "{schema}"."{table}"'
+                # Modify base query to include similarity score if doing vector search
+                if vector_query and vector_column:
+                    # Build vector literal string for PostgreSQL: '[1,2,3]'
+                    vector_literal = '[' + ','.join(str(x) for x in vector_query) + ']'
+                    # Choose operator based on metric and convert to similarity score
+                    if metric == 'cosine':
+                        # Cosine distance (<=>) returns 0 for identical, 1 for opposite
+                        # Convert to similarity: 1 - distance = similarity score
+                        similarity_expr = f"(1 - (\"{vector_column}\" <=> '{vector_literal}'::vector))"
+                        operator = '<=>'  # for ordering (ascending distance = descending similarity)
+                    elif metric == 'ip':
+                        # Inner product (<#>) - higher values = more similar (negative of actual inner product)
+                        # Convert to positive similarity score
+                        similarity_expr = f"(-(\"{vector_column}\" <#> '{vector_literal}'::vector))"
+                        operator = '<#>'  # for ordering
+                    else:  # l2
+                        # L2 distance (<->) returns 0 for identical, higher for different
+                        # Convert to similarity: 1 / (1 + distance) for normalized similarity
+                        similarity_expr = f"(1 / (1 + (\"{vector_column}\" <-> '{vector_literal}'::vector)))"
+                        operator = '<->'  # for ordering
+                    
+                    print(f"DEBUG: vector_literal = {vector_literal}")
+                    print(f"DEBUG: metric = {metric}")
+                    print(f"DEBUG: similarity_expr = {similarity_expr}")
+                    
+                    # Include similarity score in SELECT
+                    base_query = f"SELECT *, {similarity_expr} AS similarity_score FROM \"{schema}\".\"{table}\""
+                else:
+                    base_query = f'SELECT * FROM "{schema}"."{table}"'
 
                 # Add collection filtering if specified
                 if collection_id:
@@ -577,19 +700,13 @@ class DatabaseManager:
 
                 order_by = ''
                 if vector_query and vector_column:
-                    # Build vector literal string: '[1,2,3]'
-                    vector_literal = '[' + ','.join(str(x) for x in vector_query) + ']'
-                    param_index += 1
-                    params.append(vector_literal)
-                    # Choose operator based on metric
-                    # cosine: <=>, l2: <-> (default), ip: <#>
+                    # For vector similarity, order by the distance operator (ascending = most similar first)
                     if metric == 'cosine':
-                        operator = '<=>'
+                        order_by = f'ORDER BY (\"{vector_column}\" <=> \'{vector_literal}\'::vector)'
                     elif metric == 'ip':
-                        operator = '<#>'
+                        order_by = f'ORDER BY (\"{vector_column}\" <#> \'{vector_literal}\'::vector)'
                     else:  # l2
-                        operator = '<->'
-                    order_by = f'ORDER BY "{vector_column}" {operator} ${param_index}::vector'
+                        order_by = f'ORDER BY (\"{vector_column}\" <-> \'{vector_literal}\'::vector)'
                 elif sort_by:
                     # Regular column sorting
                     sort_direction = 'DESC' if sort_order.lower() == 'desc' else 'ASC'
@@ -600,11 +717,40 @@ class DatabaseManager:
                 else:
                     query = f"{base_query} {order_by} LIMIT {limit}"
 
+                # Debug: print query when vector search is involved
+                if vector_query and vector_column:
+                    print(f"Vector search query: {query}")
+                    print(f"Parameters: {params}")
+
                 rows = await conn.fetch(query, *params)
 
                 data = []
                 for row in rows:
-                    data.append(dict(row))
+                    row_dict = dict(row)
+                    data.append(row_dict)
+                    
+                # Additional debug info when vector search is performed
+                if vector_query and vector_column:
+                    print(f"Vector search returned {len(data)} rows")
+                    if data:
+                        print(f"First row columns: {list(data[0].keys())}")
+                        if 'similarity_score' in data[0]:
+                            print(f"First row similarity_score: {data[0]['similarity_score']}")
+                        else:
+                            print("WARNING: similarity_score column not found in results!")
+
+                # Get total count for the filtered collection (if collection_id is specified)
+                total_count = len(data)
+                if collection_id:
+                    # Get the actual count for this collection
+                    count_query = f'SELECT COUNT(*) as total FROM "{schema}"."{table}" WHERE collection_id = $1'
+                    count_result = await conn.fetchrow(count_query, collection_id)
+                    total_available = count_result['total'] if count_result else 0
+                else:
+                    # Get total count for the entire table
+                    count_query = f'SELECT COUNT(*) as total FROM "{schema}"."{table}"'
+                    count_result = await conn.fetchrow(count_query)
+                    total_available = count_result['total'] if count_result else 0
 
                 return {
                     "data": data,
@@ -617,6 +763,10 @@ class DatabaseManager:
                         "metric": metric,
                         "sort_by": sort_by,
                         "sort_order": sort_order,
+                        "has_similarity_score": vector_query is not None and vector_column is not None,
+                        "collection_id": collection_id,
+                        "results_returned": len(data),
+                        "total_available_in_collection": total_available,
                     }
                 }
         except Exception as e:

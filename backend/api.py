@@ -117,10 +117,25 @@ async def get_collection_names(schema: str, table: str, id_column: str, name_col
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/tables/{schema}/{table}/collection-info/{collection_id}")
+async def get_collection_info(schema: str, table: str, collection_id: str):
+    """Get information about a specific collection including vector dimensions"""
+    try:
+        print(f"Getting collection info for: {collection_id}")
+        info = await db_manager.get_collection_info(schema, table, collection_id)
+        print(f"Collection info result: {info}")
+        return info
+    except Exception as e:
+        print(f"Collection info error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/tables/{schema}/{table}/search")
 async def search_table(schema: str, table: str, request: SearchRequest):
     """Search table data with text or vector similarity"""
     try:
+        print(f"Search request: schema={schema}, table={table}")
+        print(f"Request data: {request.dict()}")
+        
         results = await db_manager.search_table(
             schema=request.schema_name,
             table=request.table,
@@ -134,6 +149,18 @@ async def search_table(schema: str, table: str, request: SearchRequest):
             sort_order=request.sortOrder,
             collection_id=request.collectionId
         )
+        
+        print(f"Results keys: {list(results.keys()) if results else 'None'}")
+        if results and 'data' in results and results['data']:
+            print(f"First row keys: {list(results['data'][0].keys()) if results['data'][0] else 'None'}")
+            if 'similarity_score' in results['data'][0]:
+                print(f"Similarity score found: {results['data'][0]['similarity_score']}")
+            else:
+                print("WARNING: No similarity_score in first row!")
+        
+        print(f"Query info: {results.get('query_info', {})}")
+        
         return results
     except Exception as e:
+        print(f"Search error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

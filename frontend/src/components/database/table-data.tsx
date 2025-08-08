@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 interface TableDataProps {
@@ -51,6 +51,14 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
     enabled: !!(schema && table),
   })
 
+  const copyToClipboard = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err)
+    }
+  }
+
   const formatCellValue = (value: any, columnName: string, isVector: boolean = false) => {
     if (value === null || value === undefined) {
       return <span className="text-neutral-400 italic">null</span>
@@ -58,18 +66,24 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
 
     if (isVector && Array.isArray(value)) {
       return (
-        <div className="flex items-center space-x-2 min-w-0">
-          <Badge variant="outline" className="text-xs flex-shrink-0">
-            {value.length}D
-          </Badge>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2 flex-shrink-0"
-            onClick={() => setSelectedVector(value)}
-          >
-            <Eye className="h-3 w-3" />
-          </Button>
+        <div className="space-y-2 min-w-0 max-w-full">
+          {/* Header with dimension and controls */}
+          <div className="flex items-center space-x-2 min-w-0">
+            <Badge variant="outline" className="text-xs flex-shrink-0 bg-blue-50 text-blue-700 border-blue-200">
+              {value.length}D vector
+            </Badge>
+            <div className="flex items-center space-x-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 flex-shrink-0"
+                onClick={() => setSelectedVector(value)}
+                title="View in dialog"
+              >
+                <Eye className="h-3 w-3" />
+              </Button>
+            </div>
+          </div>
         </div>
       )
     }
@@ -338,24 +352,46 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
           {selectedVector && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <Badge variant="outline">
+                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
                   {selectedVector.length} dimensions
                 </Badge>
-                <Button variant="outline" size="sm">
-                  <Download className="h-4 w-4 mr-2" />
-                  Copy
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => copyToClipboard(JSON.stringify(selectedVector))}
+                >
+                  <Copy className="h-4 w-4 mr-2" />
+                  Copy Array
                 </Button>
               </div>
               
-              <div className="grid grid-cols-8 gap-2 max-h-96 overflow-auto p-4 bg-neutral-50 rounded-lg font-mono text-sm">
-                {selectedVector.map((value, index) => (
-                  <div key={index} className="text-center p-2 bg-white rounded border">
-                    <div className="text-xs text-neutral-500 mb-1">{index}</div>
-                    <div className="font-medium">
-                      {typeof value === 'number' ? value.toFixed(6) : value}
-                    </div>
+              <div className="space-y-3">
+                <div className="text-sm text-neutral-600">
+                  Vector values (showing all {selectedVector.length} dimensions):
+                </div>
+                
+                {/* Improved grid with better spacing and readability */}
+                <div className="max-h-80 overflow-auto border rounded-lg bg-neutral-50">
+                  <div className="grid grid-cols-4 gap-3 p-4 font-mono text-xs">
+                    {selectedVector.map((value, index) => (
+                      <div key={index} className="flex flex-col items-center p-3 bg-white rounded border hover:bg-blue-50 hover:border-blue-200 transition-all duration-200 cursor-default">
+                        <div className="text-xs text-neutral-400 mb-1 font-semibold">
+                          [{index}]
+                        </div>
+                        <div className="font-medium text-neutral-800 text-center break-all">
+                          {typeof value === 'number' ? value.toFixed(6) : value}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                </div>
+                
+                {/* Additional format options */}
+                <div className="flex items-center justify-center pt-2 border-t">
+                  <div className="text-xs text-neutral-500">
+                    Hover over values to highlight • Values shown with 6 decimal precision
+                  </div>
+                </div>
               </div>
             </div>
           )}
