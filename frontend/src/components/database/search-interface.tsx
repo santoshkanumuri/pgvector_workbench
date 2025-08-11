@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { apiClient } from '@/lib/api'
 import { TableMetadata as TableMetadataType } from '@/lib/types'
@@ -53,7 +53,15 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
   const [isSearchFormExpanded, setIsSearchFormExpanded] = useState(true)
   const [collectionInfo, setCollectionInfo] = useState<{dimensions: number, name: string} | null>(null)
   
-  const { selectedCollectionId } = useDatabaseStore()
+  const { selectedCollectionId, tables, selectedTable } = useDatabaseStore()
+
+  // Derive the explicitly selected collection's own name (nested) if available
+  const selectedCollectionFriendlyName = useMemo(() => {
+    if (!selectedCollectionId || !selectedTable) return null
+    const tableEntry = tables.find(t => t.schema === selectedTable.schema && t.name === selectedTable.name)
+    const col = tableEntry?.collections?.find(c => c.id === selectedCollectionId)
+    return col?.name || null
+  }, [tables, selectedCollectionId, selectedTable])
 
   const searchMutation = useMutation({
     mutationFn: (params: {
@@ -226,12 +234,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
       if (value.length > 40) {
         return (
           <div className="min-w-0 max-w-full">
-            <span 
-              className="text-sm block truncate cursor-help" 
-              title={value}
-            >
-              {value}
-            </span>
+            <span className="text-sm block cursor-help" title={value}>{value}</span>
           </div>
         )
       }
@@ -282,8 +285,8 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
               <Badge variant="outline" className="text-xs">
                 {textQuery && 'Text'} {textQuery && vectorQuery && '+'} {vectorQuery && 'Vector'}
                 {!textQuery && !vectorQuery && 'Ready'}
-                {selectedCollectionId && collectionInfo && (
-                  <span className="ml-1">• {collectionInfo.name}</span>
+                {selectedCollectionId && (
+                  <span className="ml-1">• {selectedCollectionFriendlyName || collectionInfo?.name}</span>
                 )}
               </Badge>
             </div>
@@ -411,8 +414,8 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
                 <Input
                   id="vector-query"
                   placeholder={
-                    collectionInfo 
-                      ? `Enter ${collectionInfo.dimensions} comma-separated values for "${collectionInfo.name}"`
+                    collectionInfo && (selectedCollectionFriendlyName || collectionInfo.name)
+                      ? `Enter ${collectionInfo.dimensions} comma-separated values for "${selectedCollectionFriendlyName || collectionInfo.name}"`
                       : "[0.1, 0.2, 0.3] or 0.1, 0.2, 0.3"
                   }
                   value={vectorQuery}
@@ -511,9 +514,9 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
               <div className="flex items-center space-x-3">
                 <h4 className="font-medium text-neutral-900">Search Results</h4>
-                {selectedCollectionId && collectionInfo && (
+                {selectedCollectionId && (
                   <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                    from "{collectionInfo.name}"
+                    from "{selectedCollectionFriendlyName || collectionInfo?.name}"
                   </Badge>
                 )}
               </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from '@/lib/api'
 import { TableMetadata as TableMetadataType } from '@/lib/types'
@@ -35,7 +35,12 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
   const [sortBy, setSortBy] = useState<string>('none')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   
-  const { selectedCollectionId } = useDatabaseStore()
+  const { selectedCollectionId, tables } = useDatabaseStore()
+  const selectedCollectionName = useMemo(() => {
+    const tableEntry = tables.find(t => t.schema === schema && t.name === table)
+    if (!tableEntry || !selectedCollectionId) return null
+    return tableEntry.collections?.find(c => c.id === selectedCollectionId)?.name || null
+  }, [tables, schema, table, selectedCollectionId])
 
   const { data, isLoading } = useQuery({
     queryKey: ['table-data', schema, table, currentPage, pageSize, sortBy, sortOrder, selectedCollectionId],
@@ -92,12 +97,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
       if (value.length > 50) {
         return (
           <div className="min-w-0 max-w-full">
-            <span 
-              className="text-sm block truncate cursor-help" 
-              title={value}
-            >
-              {value}
-            </span>
+            <span className="text-sm block cursor-help" title={value}>{value}</span>
           </div>
         )
       }
@@ -192,11 +192,15 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
       {/* Controls - Fixed Header */}
       <div className="flex items-center justify-between p-4 border-b border-neutral-200 bg-white flex-shrink-0">
         <div className="flex items-center space-x-4">
-          <h3 className="font-medium text-neutral-900">
-            Table Data
+          <h3 className="font-medium text-neutral-900 flex items-center flex-wrap gap-2">
+            <span>Table Data</span>
+            {selectedCollectionName && <span className="text-neutral-400">›</span>}
+            {selectedCollectionName && (
+              <span className="text-blue-700 font-medium" title={selectedCollectionName}>{selectedCollectionName}</span>
+            )}
           </h3>
-          <Badge variant="secondary">
-            {data.total_count.toLocaleString()} total rows
+          <Badge variant="secondary" title={selectedCollectionId ? `Collection ID: ${selectedCollectionId}` : undefined}>
+            {data.total_count.toLocaleString()} {selectedCollectionId ? 'collection rows' : 'total rows'}
           </Badge>
         </div>
 

@@ -2,13 +2,19 @@
 
 import { Database, Wifi, WifiOff, LogOut } from 'lucide-react'
 import { useDatabaseStore } from '@/stores/database'
+import { useMemo } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/lib/api'
 
 export function Header() {
-  const { isConnected, databaseInfo, reset } = useDatabaseStore()
+  const { isConnected, databaseInfo, reset, selectedTable, selectedCollectionId, tables } = useDatabaseStore()
+  const selectedCollectionName = useMemo(() => {
+    if (!selectedTable || !selectedCollectionId) return null
+    const tableEntry = tables.find(t => t.schema === selectedTable.schema && t.name === selectedTable.name)
+    return tableEntry?.collections?.find(c => c.id === selectedCollectionId)?.name || null
+  }, [tables, selectedTable, selectedCollectionId])
   const queryClient = useQueryClient()
 
   const disconnectMutation = useMutation({
@@ -49,10 +55,18 @@ export function Header() {
         <div className="flex items-center space-x-4">
           {isConnected && databaseInfo && (
             <>
-              <div className="flex items-center space-x-3 text-sm">
+              <div className="flex items-center space-x-2 text-sm">
                 <Badge variant="secondary" className="font-mono">
                   {databaseInfo.database}
                 </Badge>
+                {selectedCollectionName && (
+                  <>
+                    <span className="text-neutral-300">›</span>
+                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200" title={selectedCollectionName}>
+                      {selectedCollectionName}
+                    </Badge>
+                  </>
+                )}
                 {databaseInfo.pgvector_installed && (
                   <Badge variant="outline" className="text-green-600 border-green-200">
                     pgvector

@@ -6,6 +6,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
 import { Database, HardDrive, Layers, Zap } from 'lucide-react'
 import { TableMetadata as TableMetadataType } from '@/lib/types'
+import { useDatabaseStore } from '@/stores/database'
+import { useMemo } from 'react'
 
 interface TableMetadataProps {
   metadata: TableMetadataType | null | undefined
@@ -13,9 +15,23 @@ interface TableMetadataProps {
 }
 
 export function TableMetadata({ metadata, isLoading }: TableMetadataProps) {
+  const { selectedTable, selectedCollectionId, tables } = useDatabaseStore()
+  const selectedCollectionName = useMemo(() => {
+    if (!selectedTable || !selectedCollectionId) return null
+    const tableEntry = tables.find(t => t.schema === selectedTable.schema && t.name === selectedTable.name)
+    return tableEntry?.collections?.find(c => c.id === selectedCollectionId)?.name || null
+  }, [tables, selectedTable, selectedCollectionId])
   if (isLoading) {
     return (
       <div className="p-6 space-y-6">
+        {selectedCollectionName && (
+          <div className="flex items-center space-x-2 text-sm text-neutral-600">
+            <span className="font-mono text-neutral-500">{selectedTable?.schema}.{selectedTable?.name}</span>
+            <span className="text-neutral-400">›</span>
+            <span className="font-semibold text-blue-700" title={selectedCollectionName}>{selectedCollectionName}</span>
+            <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Collection</Badge>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>

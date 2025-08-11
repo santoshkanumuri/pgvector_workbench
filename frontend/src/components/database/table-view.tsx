@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useDatabaseStore } from '@/stores/database'
 import { apiClient } from '@/lib/api'
@@ -11,7 +11,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Database, Search, BarChart3 } from 'lucide-react'
 
 export function TableView() {
-  const { selectedTable } = useDatabaseStore()
+  const { selectedTable, selectedCollectionId, tables } = useDatabaseStore()
+  const selectedCollectionName = useMemo(() => {
+    if (!selectedTable || !selectedCollectionId) return null
+    const tableEntry = tables.find(t => t.schema === selectedTable.schema && t.name === selectedTable.name)
+    return tableEntry?.collections?.find(c => c.id === selectedCollectionId)?.name || null
+  }, [tables, selectedTable, selectedCollectionId])
   const [activeTab, setActiveTab] = useState('data')
 
   // Fetch table metadata
@@ -38,11 +43,19 @@ export function TableView() {
               <Database className="h-4 w-4 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-neutral-900">
-                {selectedTable.name}
+              <h2 className="text-lg font-semibold text-neutral-900 flex items-center flex-wrap gap-2">
+                <span>{selectedTable.name}</span>
+                {selectedCollectionName && (
+                  <span className="text-neutral-400">›</span>
+                )}
+                {selectedCollectionName && (
+                  <span className="text-blue-700 font-medium" title={selectedCollectionName}>
+                    {selectedCollectionName}
+                  </span>
+                )}
               </h2>
               <p className="text-sm text-neutral-500 font-mono">
-                {selectedTable.schema}
+                {selectedTable.schema}{selectedCollectionName ? ` • ${selectedCollectionId}` : ''}
               </p>
             </div>
           </div>
