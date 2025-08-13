@@ -140,9 +140,9 @@ export function TableMetadata({ metadata, isLoading }: TableMetadataProps) {
             <Zap className="h-4 w-4 text-neutral-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{metadata.indexes.length}</div>
+            <div className="text-2xl font-bold">{Array.isArray(metadata.indexes) ? metadata.indexes.length : 0}</div>
             <p className="text-xs text-neutral-500 mt-1">
-              {metadata.indexes.filter(idx => idx.vector_index_type).length} vector indexes
+              {Array.isArray(metadata.indexes) ? metadata.indexes.filter(idx => idx.vector_index_type).length : 0} vector indexes
             </p>
           </CardContent>
         </Card>
@@ -230,7 +230,7 @@ export function TableMetadata({ metadata, isLoading }: TableMetadataProps) {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {metadata.indexes.length > 0 ? (
+            {Array.isArray(metadata.indexes) && metadata.indexes.length > 0 ? (
               <div className="space-y-3">
                 {metadata.indexes.map((index, idx) => (
                   <div key={index.indexname} className="border rounded-lg p-3">

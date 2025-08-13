@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { 
   Select, 
   SelectContent, 
@@ -32,7 +33,7 @@ import {
   TableRow 
 } from '@/components/ui/table'
 import { Separator } from '@/components/ui/separator'
-import { Search, Loader2, Zap, Type, Copy, ChevronDown, ChevronUp, Settings, Minimize2, Maximize2 } from 'lucide-react'
+import { Search, Loader2, Zap, Type, Copy, ChevronDown, ChevronUp, Settings, Minimize2, Maximize2, Eye, Check } from 'lucide-react'
 
 interface SearchInterfaceProps {
   schema: string
@@ -51,6 +52,8 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [expandedVectors, setExpandedVectors] = useState<Set<string>>(new Set())
   const [isSearchFormExpanded, setIsSearchFormExpanded] = useState(true)
+  const [selectedVector, setSelectedVector] = useState<number[] | null>(null)
+  const [copiedStates, setCopiedStates] = useState<Set<string>>(new Set())
   const [collectionInfo, setCollectionInfo] = useState<{dimensions: number, name: string} | null>(null)
   
   const { selectedCollectionId, tables, selectedTable } = useDatabaseStore()
@@ -79,7 +82,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
 
   const collectionInfoMutation = useMutation({
     mutationFn: (collectionId: string) => 
-      fetch(`http://localhost:8011/api/tables/${schema}/${table}/collection-info/${collectionId}`)
+      fetch(`http://10.140.118.145:8011/api/tables/${schema}/${table}/collection-info/${collectionId}`)
         .then(res => res.json()),
     onSuccess: (data) => {
       setCollectionInfo({
@@ -158,23 +161,71 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
     searchMutation.reset()
   }
 
-  const copyToClipboard = async (text: string) => {
+  const copyToClipboard = async (text: string, feedbackKey?: string) => {
     try {
       await navigator.clipboard.writeText(text)
+      // You could add a toast notification here if you have a toast system
+      console.log('Vector copied to clipboard')
+      
+      // Show feedback
+      if (feedbackKey) {
+        setCopiedStates(prev => new Set(prev).add(feedbackKey))
+        // Clear feedback after 2 seconds
+        setTimeout(() => {
+          setCopiedStates(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(feedbackKey)
+            return newSet
+          })
+        }, 2000)
+      }
     } catch (err) {
       console.error('Failed to copy to clipboard:', err)
+      // Fallback for older browsers
+      try {
+        const textArea = document.createElement('textarea')
+        textArea.value = text
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+        console.log('Vector copied to clipboard (fallback)')
+        
+        // Show feedback for fallback too
+        if (feedbackKey) {
+          setCopiedStates(prev => new Set(prev).add(feedbackKey))
+          setTimeout(() => {
+            setCopiedStates(prev => {
+              const newSet = new Set(prev)
+              newSet.delete(feedbackKey)
+              return newSet
+            })
+          }, 2000)
+        }
+      } catch (fallbackError) {
+        console.error('Fallback copy also failed:', fallbackError)
+      }
     }
   }
 
-  const formatCellValue = (value: any, index?: number) => {
+  const formatCellValue = (value: any, index?: number, columnName?: string, rowData?: any) => {
     if (value === null || value === undefined) {
       return <span className="text-neutral-400 italic">null</span>
     }
 
-    if (Array.isArray(value)) {
+    // Enhanced vector detection - check if it's an array of numbers that looks like a vector
+    if (Array.isArray(value) && value.length > 0 && value.every(v => typeof v === 'number')) {
       const vectorKey = `search-${index}-${JSON.stringify(value).substring(0, 50)}`
       const isExpanded = expandedVectors.has(vectorKey)
       const vectorArrayString = JSON.stringify(value)
+      
+      // Create a unique identifier using UUID if available, otherwise use row index and column
+      const uniqueId = rowData?.id || rowData?.uuid || rowData?._id || `search-row-${index}`
+      const copyFeedbackKey = `search-vector-${uniqueId}-${columnName || 'unknown'}`
+      const isCopied = copiedStates.has(copyFeedbackKey)
+      
+      // Debug: Log the unique identifier (remove this in production)
+      console.log(`Search copy key for ${columnName}:`, copyFeedbackKey, 'Available fields:', Object.keys(rowData || {}))
       
       return (
         <div className="space-y-2 min-w-0 max-w-full">
@@ -187,11 +238,22 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-6 px-2 flex-shrink-0"
-                onClick={() => copyToClipboard(vectorArrayString)}
-                title="Copy full array"
+                className={`h-6 px-2 flex-shrink-0 transition-colors ${
+                  isCopied ? 'bg-green-100 text-green-700' : ''
+                }`}
+                onClick={() => copyToClipboard(vectorArrayString, copyFeedbackKey)}
+                title={isCopied ? "Copied!" : "Copy vector to clipboard"}
               >
-                <Copy className="h-3 w-3" />
+                {isCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 flex-shrink-0"
+                onClick={() => setSelectedVector(value)}
+                title="View in dialog"
+              >
+                <Eye className="h-3 w-3" />
               </Button>
               <Button
                 variant="ghost"
@@ -206,7 +268,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
                   }
                   setExpandedVectors(newExpanded)
                 }}
-                title={isExpanded ? "Collapse" : "Expand preview"}
+                title={isExpanded ? "Collapse preview" : "Expand preview"}
               >
                 {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               </Button>
@@ -581,7 +643,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
                                     </span>
                                   </div>
                                 ) : (
-                                  formatCellValue(value, index)
+                                  formatCellValue(value, index, column, row)
                                 )}
                               </div>
                             </TableCell>
@@ -625,6 +687,64 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
             </div>
           )}
       </div>
+
+      {/* Vector Dialog */}
+      <Dialog open={!!selectedVector} onOpenChange={() => setSelectedVector(null)}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>Vector Values</DialogTitle>
+          </DialogHeader>
+          {selectedVector && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                  {selectedVector.length} dimensions
+                </Badge>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className={`transition-colors ${
+                    copiedStates.has('search-dialog-vector-full') ? 'bg-green-100 text-green-700 border-green-300' : ''
+                  }`}
+                  onClick={() => copyToClipboard(JSON.stringify(selectedVector), 'search-dialog-vector-full')}
+                >
+                  {copiedStates.has('search-dialog-vector-full') ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
+                  {copiedStates.has('search-dialog-vector-full') ? 'Copied!' : 'Copy Array'}
+                </Button>
+              </div>
+              
+              <div className="space-y-3">
+                <div className="text-sm text-neutral-600">
+                  Vector values (showing all {selectedVector.length} dimensions):
+                </div>
+                
+                {/* Improved grid with better spacing and readability */}
+                <div className="max-h-80 overflow-auto border rounded-lg bg-neutral-50">
+                  <div className="grid grid-cols-4 gap-3 p-4 font-mono text-xs">
+                    {selectedVector.map((value, index) => (
+                      <div key={index} className="flex flex-col items-center p-3 bg-white rounded border hover:bg-blue-50 hover:border-blue-200 transition-all duration-200 cursor-default">
+                        <div className="text-xs text-neutral-400 mb-1 font-semibold">
+                          [{index}]
+                        </div>
+                        <div className="font-medium text-neutral-800 text-center break-all">
+                          {typeof value === 'number' ? value.toFixed(6) : value}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                {/* Additional format options */}
+                <div className="flex items-center justify-center pt-2 border-t">
+                  <div className="text-xs text-neutral-500">
+                    Hover over values to highlight • Values shown with 6 decimal precision
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

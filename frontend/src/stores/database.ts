@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { DatabaseInfo, DatabaseTable, TableMetadata } from '@/lib/types';
 
 interface DatabaseState {
@@ -32,64 +33,10 @@ interface DatabaseState {
   reset: () => void;
 }
 
-export const useDatabaseStore = create<DatabaseState>((set, get) => ({
-  // Initial state
-  isConnected: false,
-  connectionString: '',
-  databaseInfo: null,
-  connectionError: null,
-  tables: [],
-  selectedTable: null,
-  selectedCollectionId: null,
-  tableMetadata: null,
-  isConnecting: false,
-  isLoadingTables: false,
-  isLoadingMetadata: false,
-
-  // Actions
-  setConnectionString: (connectionString: string) => {
-    set({ connectionString });
-  },
-
-  setConnectionState: (isConnected: boolean, databaseInfo?: DatabaseInfo | null, error?: string | null) => {
-    set({
-      isConnected,
-      databaseInfo: databaseInfo ?? null,
-      connectionError: error ?? null,
-      isConnecting: false,
-    });
-  },
-
-  setTables: (tables: DatabaseTable[]) => {
-    set({ tables, isLoadingTables: false });
-  },
-
-  setSelectedTable: (table: DatabaseTable | null) => {
-    set({ selectedTable: table, selectedCollectionId: null, tableMetadata: null });
-  },
-
-  setSelectedCollection: (collectionId: string | null) => {
-    set({ selectedCollectionId: collectionId });
-  },
-
-  setTableMetadata: (metadata: TableMetadata | null) => {
-    set({ tableMetadata: metadata, isLoadingMetadata: false });
-  },
-
-  setConnecting: (isConnecting: boolean) => {
-    set({ isConnecting });
-  },
-
-  setLoadingTables: (isLoading: boolean) => {
-    set({ isLoadingTables: isLoading });
-  },
-
-  setLoadingMetadata: (isLoading: boolean) => {
-    set({ isLoadingMetadata: isLoading });
-  },
-
-  reset: () => {
-    set({
+export const useDatabaseStore = create<DatabaseState>()(
+  persist(
+    (set, get) => ({
+      // Initial state
       isConnected: false,
       connectionString: '',
       databaseInfo: null,
@@ -101,6 +48,73 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       isConnecting: false,
       isLoadingTables: false,
       isLoadingMetadata: false,
-    });
-  },
-}));
+
+      // Actions
+      setConnectionString: (connectionString: string) => {
+        set({ connectionString });
+      },
+
+      setConnectionState: (isConnected: boolean, databaseInfo?: DatabaseInfo | null, error?: string | null) => {
+        set({
+          isConnected,
+          databaseInfo: databaseInfo ?? null,
+          connectionError: error ?? null,
+          isConnecting: false,
+        });
+      },
+
+      setTables: (tables: DatabaseTable[]) => {
+        set({ tables, isLoadingTables: false });
+      },
+
+      setSelectedTable: (table: DatabaseTable | null) => {
+        set({ selectedTable: table, selectedCollectionId: null, tableMetadata: null });
+      },
+
+      setSelectedCollection: (collectionId: string | null) => {
+        set({ selectedCollectionId: collectionId });
+      },
+
+      setTableMetadata: (metadata: TableMetadata | null) => {
+        set({ tableMetadata: metadata, isLoadingMetadata: false });
+      },
+
+      setConnecting: (isConnecting: boolean) => {
+        set({ isConnecting });
+      },
+
+      setLoadingTables: (isLoading: boolean) => {
+        set({ isLoadingTables: isLoading });
+      },
+
+      setLoadingMetadata: (isLoading: boolean) => {
+        set({ isLoadingMetadata: isLoading });
+      },
+
+      reset: () => {
+        set({
+          isConnected: false,
+          connectionString: '',
+          databaseInfo: null,
+          connectionError: null,
+          tables: [],
+          selectedTable: null,
+          selectedCollectionId: null,
+          tableMetadata: null,
+          isConnecting: false,
+          isLoadingTables: false,
+          isLoadingMetadata: false,
+        });
+      },
+    }),
+    {
+      name: 'db-look-database',
+      partialize: (state) => ({ 
+        // Only persist UI state that should survive page reloads
+        selectedCollectionId: state.selectedCollectionId,
+      }),
+      // Skip hydration to prevent SSR mismatch
+      skipHydration: true,
+    }
+  )
+);

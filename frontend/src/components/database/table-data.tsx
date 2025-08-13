@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy, Check } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 interface TableDataProps {
@@ -34,6 +34,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
   const [selectedVector, setSelectedVector] = useState<number[] | null>(null)
   const [sortBy, setSortBy] = useState<string>('none')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [copiedStates, setCopiedStates] = useState<Set<string>>(new Set())
   
   const { selectedCollectionId, tables } = useDatabaseStore()
   const selectedCollectionName = useMemo(() => {
@@ -56,20 +57,75 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
     enabled: !!(schema && table),
   })
 
-  const copyToClipboard = async (text: string) => {
+  const copyToClipboard = async (text: string, feedbackKey?: string) => {
     try {
       await navigator.clipboard.writeText(text)
+      // You could add a toast notification here if you have a toast system
+      console.log('Vector copied to clipboard')
+      
+      // Show feedback
+      if (feedbackKey) {
+        setCopiedStates(prev => new Set(prev).add(feedbackKey))
+        // Clear feedback after 2 seconds
+        setTimeout(() => {
+          setCopiedStates(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(feedbackKey)
+            return newSet
+          })
+        }, 2000)
+      }
     } catch (err) {
       console.error('Failed to copy to clipboard:', err)
+      // Fallback for older browsers
+      try {
+        const textArea = document.createElement('textarea')
+        textArea.value = text
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+        console.log('Vector copied to clipboard (fallback)')
+        
+        // Show feedback for fallback too
+        if (feedbackKey) {
+          setCopiedStates(prev => new Set(prev).add(feedbackKey))
+          setTimeout(() => {
+            setCopiedStates(prev => {
+              const newSet = new Set(prev)
+              newSet.delete(feedbackKey)
+              return newSet
+            })
+          }, 2000)
+        }
+      } catch (fallbackError) {
+        console.error('Fallback copy also failed:', fallbackError)
+      }
     }
   }
 
-  const formatCellValue = (value: any, columnName: string, isVector: boolean = false) => {
+  const formatCellValue = (value: any, columnName: string, isVector: boolean = false, rowData?: any, rowIndex?: number) => {
     if (value === null || value === undefined) {
       return <span className="text-neutral-400 italic">null</span>
     }
 
-    if (isVector && Array.isArray(value)) {
+    // Enhanced vector detection - check if it's marked as vector OR if it's an array of numbers that looks like a vector
+    const isActuallyVector = isVector || (
+      Array.isArray(value) && 
+      value.length > 0 && 
+      value.every(v => typeof v === 'number') &&
+      (value.length >= 50 || isVectorColumn(columnName)) // Either has many dimensions or column name suggests it's a vector
+    )
+
+    if (isActuallyVector && Array.isArray(value)) {
+      // Create a unique identifier using UUID if available, otherwise use row index and column
+      const uniqueId = rowData?.id || rowData?.uuid || rowData?._id || `row-${rowIndex}`
+      const copyFeedbackKey = `table-vector-${uniqueId}-${columnName}`
+      const isCopied = copiedStates.has(copyFeedbackKey)
+      
+      // Debug: Log the unique identifier (remove this in production)
+      console.log(`Copy key for ${columnName}:`, copyFeedbackKey, 'Available fields:', Object.keys(rowData || {}))
+      
       return (
         <div className="space-y-2 min-w-0 max-w-full">
           {/* Header with dimension and controls */}
@@ -78,6 +134,17 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               {value.length}D vector
             </Badge>
             <div className="flex items-center space-x-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className={`h-6 px-2 flex-shrink-0 transition-colors ${
+                  isCopied ? 'bg-green-100 text-green-700' : ''
+                }`}
+                onClick={() => copyToClipboard(JSON.stringify(value), copyFeedbackKey)}
+                title={isCopied ? "Copied!" : "Copy vector to clipboard"}
+              >
+                {isCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -134,7 +201,16 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
   }
 
   const isVectorColumn = (columnName: string) => {
-    return metadata?.vector_info && columnName in metadata.vector_info
+    // Check if it's in the vector_info metadata (primary check)
+    if (metadata?.vector_info && columnName in metadata.vector_info) {
+      return true
+    }
+    
+    // Also check for common vector/embedding column names
+    const vectorColumnNames = ['embedding', 'embeddings', 'vector', 'vectors', 'features']
+    return vectorColumnNames.some(name => 
+      columnName.toLowerCase().includes(name.toLowerCase())
+    )
   }
 
   const totalPages = data ? Math.ceil(data.total_count / pageSize) : 0
@@ -291,7 +367,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                   {columns.map((column) => (
                     <TableCell key={column} className="min-w-[150px] max-w-[250px] px-4 py-3 align-top">
                       <div className="overflow-hidden">
-                        {formatCellValue(row[column], column, isVectorColumn(column))}
+                        {formatCellValue(row[column], column, isVectorColumn(column), row, index)}
                       </div>
                     </TableCell>
                   ))}
@@ -362,10 +438,13 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                 <Button 
                   variant="outline" 
                   size="sm"
-                  onClick={() => copyToClipboard(JSON.stringify(selectedVector))}
+                  className={`transition-colors ${
+                    copiedStates.has('dialog-vector-full') ? 'bg-green-100 text-green-700 border-green-300' : ''
+                  }`}
+                  onClick={() => copyToClipboard(JSON.stringify(selectedVector), 'dialog-vector-full')}
                 >
-                  <Copy className="h-4 w-4 mr-2" />
-                  Copy Array
+                  {copiedStates.has('dialog-vector-full') ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
+                  {copiedStates.has('dialog-vector-full') ? 'Copied!' : 'Copy Array'}
                 </Button>
               </div>
               

@@ -29,6 +29,9 @@ export function TableView() {
     enabled: !!selectedTable,
   })
 
+  // Debug: Log metadata when it changes
+  console.log('Table metadata in view:', metadata)
+
   if (!selectedTable) {
     return null
   }

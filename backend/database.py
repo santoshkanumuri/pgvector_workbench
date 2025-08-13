@@ -1,5 +1,6 @@
 import asyncpg
 import asyncio
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 import json
@@ -16,57 +17,96 @@ class DatabaseManager:
     def __init__(self):
         self._connection_pool: Optional[asyncpg.Pool] = None
         self._connection_string: Optional[str] = None
+        self._last_activity = datetime.now()
+        self._connection_lock = asyncio.Lock()  # Protect connection operations
     
     async def connect(self, connection_string: str) -> bool:
-        """Connect to PostgreSQL database and test connection"""
-        try:
-            # Close existing connection if any
-            await self.disconnect()
-            
-            print(f"Attempting to connect to database with connection string: {connection_string[:20]}...")
-            
-            # Create new connection pool
-            self._connection_pool = await asyncpg.create_pool(
-                connection_string,
-                min_size=1,
-                max_size=10,
-                command_timeout=30
-            )
-            
-            print("Connection pool created, testing connection...")
-            
-            # Test connection
-            async with self._connection_pool.acquire() as conn:
-                await conn.fetchval("SELECT 1")
+        """Connect to PostgreSQL database and test connection with proper error handling"""
+        async with self._connection_lock:
+            try:
+                # Close existing connection if any
+                await self._cleanup_connection()
                 
-            print("Connection test successful!")
-            self._connection_string = connection_string
-            return True
-            
-        except Exception as e:
-            print(f"Connection failed with error: {type(e).__name__}: {e}")
-            await self.disconnect()
-            return False
+                print(f"Attempting to connect to database...")
+                
+                # Create new connection pool with optimized settings
+                self._connection_pool = await asyncpg.create_pool(
+                    connection_string,
+                    min_size=2,  # Minimum connections for responsiveness
+                    max_size=20,  # Increased max for concurrent users
+                    max_queries=50000,  # Allow more queries per connection
+                    max_inactive_connection_lifetime=300,  # 5 minutes
+                    command_timeout=60,  # Increased timeout for large queries
+                    server_settings={
+                        'application_name': 'pgvector_workbench',
+                        'statement_timeout': '300000',  # 5 minute statement timeout
+                    }
+                )
+                
+                print("Connection pool created, testing connection...")
+                
+                # Test connection with timeout
+                try:
+                    async with asyncio.timeout(10):  # 10 second timeout for initial connection
+                        async with self._connection_pool.acquire() as conn:
+                            await conn.fetchval("SELECT 1")
+                except asyncio.TimeoutError:
+                    await self._cleanup_connection()
+                    print("Connection test timed out")
+                    return False
+                    
+                print("Connection test successful!")
+                self._connection_string = connection_string
+                self._last_activity = datetime.now()
+                return True
+                
+            except Exception as e:
+                print(f"Connection failed with error: {type(e).__name__}: {e}")
+                await self._cleanup_connection()
+                return False
+    
+    async def _cleanup_connection(self):
+        """Internal method to clean up connection pool"""
+        if self._connection_pool:
+            try:
+                await self._connection_pool.close()
+            except Exception as e:
+                print(f"Error closing connection pool: {e}")
+            finally:
+                self._connection_pool = None
+                self._connection_string = None
     
     async def disconnect(self):
-        """Close database connection"""
-        if self._connection_pool:
-            await self._connection_pool.close()
-            self._connection_pool = None
-            self._connection_string = None
+        """Close database connection with proper cleanup"""
+        async with self._connection_lock:
+            await self._cleanup_connection()
     
     def is_connected(self) -> bool:
         """Check if database is connected"""
-        return self._connection_pool is not None
+        return self._connection_pool is not None and not self._connection_pool._closed
+    
+    def update_activity(self):
+        """Update last activity timestamp for connection management"""
+        self._last_activity = datetime.now()
     
     @asynccontextmanager
     async def get_connection(self):
-        """Get database connection from pool"""
-        if not self._connection_pool:
+        """Get database connection from pool with activity tracking and error handling"""
+        if not self.is_connected():
             raise Exception("No database connection available")
         
-        async with self._connection_pool.acquire() as connection:
-            yield connection
+        try:
+            # Update activity timestamp
+            self.update_activity()
+            
+            # Get connection with timeout
+            async with asyncio.timeout(30):  # 30 second timeout to acquire connection
+                async with self._connection_pool.acquire() as connection:
+                    yield connection
+        except asyncio.TimeoutError:
+            raise Exception("Timeout acquiring database connection - pool may be exhausted")
+        except Exception as e:
+            raise Exception(f"Failed to acquire database connection: {str(e)}")
     
     async def test_connection(self) -> Dict[str, Any]:
         """Test current connection and return database info"""
@@ -322,145 +362,163 @@ class DatabaseManager:
             return {}
     
     async def get_table_metadata(self, schema: str, table: str) -> Dict[str, Any]:
-        """Get metadata for a specific table including size, index info, vector dimensions."""
+        """Get metadata for a specific table with optimized queries for better performance."""
         if not self.is_connected():
             raise Exception("No database connection available")
         try:
             print(f"Getting metadata for table: {schema}.{table}")
             async with self.get_connection() as conn:
-                # Row count (approximate using reltuples for speed, fallback precise)
-                print("Fetching row count...")
-                relid = await conn.fetchrow(
-                    """
-                    SELECT c.reltuples::bigint AS approx, c.relname
+                # Use a single query to get multiple pieces of information efficiently
+                metadata_query = """
+                WITH table_stats AS (
+                    SELECT 
+                        c.reltuples::bigint AS approx_row_count,
+                        pg_total_relation_size(c.oid) AS size_bytes,
+                        pg_size_pretty(pg_total_relation_size(c.oid)) AS size_pretty
                     FROM pg_class c
                     JOIN pg_namespace n ON n.oid = c.relnamespace
                     WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'r'
-                    """,
-                    schema, table
+                ),
+                column_info AS (
+                    SELECT 
+                        column_name,
+                        data_type,
+                        udt_name,
+                        is_nullable,
+                        ordinal_position
+                    FROM information_schema.columns 
+                    WHERE table_schema = $1 AND table_name = $2
+                    ORDER BY ordinal_position
+                ),
+                index_info AS (
+                    SELECT 
+                        indexname, 
+                        indexdef,
+                        CASE 
+                            WHEN indexdef ILIKE '%USING ivfflat%' THEN 'ivfflat'
+                            WHEN indexdef ILIKE '%USING hnsw%' THEN 'hnsw'
+                            ELSE NULL 
+                        END AS vector_index_type
+                    FROM pg_indexes 
+                    WHERE schemaname = $1 AND tablename = $2
                 )
-                if relid and relid["approx"] is not None and relid["approx"] >= 1000000:
-                    row_count = relid["approx"]  # use estimate for very large tables
-                    precise = False
-                else:
-                    row_count = await conn.fetchval(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
-                    precise = True
-
-                print(f"Row count: {row_count}")
-
-                # Columns
-                print("Fetching columns...")
-                columns_query = """
                 SELECT 
-                    column_name,
-                    data_type,
-                    udt_name,
-                    is_nullable
-                FROM information_schema.columns 
-                WHERE table_schema = $1 AND table_name = $2
-                ORDER BY ordinal_position
+                    (SELECT approx_row_count FROM table_stats) as approx_row_count,
+                    (SELECT size_bytes FROM table_stats) as size_bytes,
+                    (SELECT size_pretty FROM table_stats) as size_pretty,
+                    (
+                        SELECT COALESCE(
+                            json_agg(
+                                json_build_object(
+                                    'column_name', column_name,
+                                    'data_type', data_type,
+                                    'udt_name', udt_name,
+                                    'is_nullable', is_nullable
+                                )
+                            ),
+                            '[]'::json
+                        )
+                        FROM column_info
+                    ) as columns,
+                    (
+                        SELECT COALESCE(
+                            json_agg(
+                                json_build_object(
+                                    'indexname', indexname,
+                                    'indexdef', indexdef,
+                                    'vector_index_type', vector_index_type
+                                )
+                            ),
+                            '[]'::json
+                        )
+                        FROM index_info
+                    ) as indexes;
                 """
-                columns = await conn.fetch(columns_query, schema, table)
-                print(f"Found {len(columns)} columns")
+                
+                print(f"Executing metadata query for {schema}.{table}")
+                result = await conn.fetchrow(metadata_query, schema, table)
+                
+                if not result:
+                    raise Exception(f"Table {schema}.{table} not found")
 
-                # Vector info (dimension, avg norm maybe later)
-                print("Fetching vector info...")
+                print(f"Basic metadata retrieved for {schema}.{table}")
+
+                # Get precise row count for small tables or if approximate is None
+                approx_count = result['approx_row_count'] or 0
+                if approx_count < 100000:  # Get precise count for smaller tables
+                    try:
+                        print(f"Getting precise row count for {schema}.{table}")
+                        precise_count = await conn.fetchval(f'SELECT COUNT(*) FROM "{schema}"."{table}"')
+                        row_count = precise_count
+                        precise = True
+                    except Exception as e:
+                        print(f"Failed to get precise row count for {schema}.{table}: {e}")
+                        row_count = approx_count
+                        precise = False
+                else:
+                    row_count = approx_count
+                    precise = False
+
+                columns = result['columns'] or []
+                print(f"Found {len(columns)} columns for {schema}.{table}")
+                
+                # Debug: Check what type of data we're getting
+                if columns:
+                    print(f"First column type: {type(columns[0])}, value: {columns[0]}")
+                
+                # Handle case where columns might be returned as strings instead of dicts
+                if columns and isinstance(columns[0], str):
+                    print("Columns returned as strings, parsing JSON...")
+                    import json
+                    try:
+                        columns = [json.loads(col) if isinstance(col, str) else col for col in columns]
+                        print(f"Successfully parsed {len(columns)} column objects")
+                    except json.JSONDecodeError as e:
+                        print(f"Failed to parse column JSON: {e}")
+                        columns = []
+                
+                # Get vector dimensions for vector columns
                 vector_info: Dict[str, Any] = {}
                 for col in columns:
-                    if col['udt_name'] == 'vector':
+                    if isinstance(col, dict) and col.get('udt_name') == 'vector':
+                        print(f"Processing vector column: {col['column_name']}")
                         try:
-                            # Build the query with proper identifier quoting
-                            quoted_schema = f'"{schema}"'
-                            quoted_table = f'"{table}"' 
-                            quoted_column = f'"{col["column_name"]}"'
-                            
-                            # Try different approaches to get vector dimension
-                            # First try: use array_length on the vector
-                            vector_dim_query = f"SELECT array_length(string_to_array(replace(replace({quoted_column}::text, '[', ''), ']', ''), ','), 1) as dim FROM {quoted_schema}.{quoted_table} WHERE {quoted_column} IS NOT NULL LIMIT 1"
-                            print(f"Executing vector dims query (array_length): {vector_dim_query}")
-                            dim = await conn.fetchval(vector_dim_query)
-                            
-                            if dim is None:
-                                # Alternative: try using vector_dims if it exists
-                                try:
-                                    vector_dim_query2 = f"SELECT vector_dims({quoted_column}) FROM {quoted_schema}.{quoted_table} WHERE {quoted_column} IS NOT NULL LIMIT 1"
-                                    print(f"Trying vector_dims function: {vector_dim_query2}")
-                                    dim = await conn.fetchval(vector_dim_query2)
-                                except:
-                                    # Last resort: get from pg_attribute (typmod contains dimension for vector type)
-                                    dim_query = """
-                                    SELECT a.atttypmod 
-                                    FROM pg_attribute a 
-                                    JOIN pg_class c ON a.attrelid = c.oid 
-                                    JOIN pg_namespace n ON c.relnamespace = n.oid 
-                                    WHERE n.nspname = $1 AND c.relname = $2 AND a.attname = $3
-                                    """
-                                    dim = await conn.fetchval(dim_query, schema, table, col['column_name'])
-                                    
-                            vector_info[col['column_name']] = {"dimension": dim}
-                            print(f"Vector column {col['column_name']} has dimension: {dim}")
+                            # More efficient vector dimension query
+                            dim_query = f"""
+                            SELECT COALESCE(
+                                (SELECT vector_dims("{col['column_name']}") FROM "{schema}"."{table}" 
+                                 WHERE "{col['column_name']}" IS NOT NULL LIMIT 1),
+                                (SELECT a.atttypmod FROM pg_attribute a 
+                                 JOIN pg_class c ON a.attrelid = c.oid 
+                                 JOIN pg_namespace n ON c.relnamespace = n.oid 
+                                 WHERE n.nspname = $1 AND c.relname = $2 AND a.attname = $3)
+                            ) as dimension
+                            """
+                            print(f"Executing vector dimension query for {col['column_name']}")
+                            dim_result = await conn.fetchval(dim_query, schema, table, col['column_name'])
+                            vector_info[col['column_name']] = {"dimension": dim_result}
+                            print(f"Vector column {col['column_name']} has dimension: {dim_result}")
                         except Exception as e:
                             print(f"Failed to get vector dimension for {col['column_name']}: {e}")
                             vector_info[col['column_name']] = {"dimension": None}
 
-                # Table size
-                print("Fetching table size...")
-                try:
-                    # Use direct string formatting instead of format() function with parameters
-                    size_query = f'SELECT pg_total_relation_size(\'"{schema}"."{table}"\') AS size_bytes'
-                    size_bytes = await conn.fetchval(size_query)
-                    print(f"Table size in bytes: {size_bytes}")
-                except Exception as e:
-                    print(f"Failed to get table size: {e}")
-                    size_bytes = 0
-                
-                # Pretty size
-                print("Fetching pretty size...")
-                try:
-                    pretty_size_query = f'SELECT pg_size_pretty(pg_total_relation_size(\'"{schema}"."{table}"\')) AS pretty_size'
-                    size_pretty = await conn.fetchval(pretty_size_query)
-                    print(f"Pretty size: {size_pretty}")
-                except Exception as e:
-                    print(f"Failed to get pretty size: {e}")
-                    size_pretty = "Unknown"
-
-                # Index info (including vector indexes like ivfflat / hnsw)
-                print("Fetching index info...")
-                try:
-                    index_rows = await conn.fetch(
-                        """
-                        SELECT indexname, indexdef,
-                               CASE 
-                                 WHEN indexdef ILIKE '%USING ivfflat%' THEN 'ivfflat'
-                                 WHEN indexdef ILIKE '%USING hnsw%' THEN 'hnsw'
-                                 ELSE NULL END AS vector_index_type
-                        FROM pg_indexes 
-                        WHERE schemaname = $1 AND tablename = $2
-                        ORDER BY indexname
-                        """,
-                        schema, table
-                    )
-                    indexes = [dict(r) for r in index_rows]
-                    print(f"Found {len(indexes)} indexes")
-                except Exception as e:
-                    print(f"Failed to get indexes: {e}")
-                    indexes = []
-
-                print("Preparing final response...")
-                result = {
+                print(f"Metadata retrieval completed for {schema}.{table}")
+                return {
                     "schema": schema,
                     "table": table,
                     "row_count": row_count,
                     "row_count_precise": precise,
-                    "columns": [dict(col) for col in columns],
+                    "columns": columns,
                     "vector_info": vector_info,
-                    "size_bytes": size_bytes,
-                    "size_pretty": size_pretty,
-                    "indexes": indexes,
+                    "size_bytes": result['size_bytes'] or 0,
+                    "size_pretty": result['size_pretty'] or "Unknown",
+                    "indexes": result['indexes'] or [],
                 }
-                print("Metadata collection completed successfully!")
-                return result
+                
         except Exception as e:
+            print(f"ERROR in get_table_metadata for {schema}.{table}: {e}")
+            import traceback
+            traceback.print_exc()
             raise Exception(f"Failed to get table metadata: {e}")
     
     async def get_table_data(
