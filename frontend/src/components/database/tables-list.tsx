@@ -2,14 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Table, Search, Loader2, ChevronRight, ChevronDown, GitBranch, Link, Database, FileText } from 'lucide-react'
+import { Table, Search, Loader2, ChevronRight, ChevronDown, GitBranch, Link, Database, FileText, BarChart3 } from 'lucide-react'
 import { useDatabaseStore } from '@/stores/database'
 import { apiClient } from '@/lib/api'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
-import { DatabaseTable, Collection } from '@/lib/types'
+import { DatabaseTable, Collection, CollectionStats } from '@/lib/types'
 
 interface TableGroup {
   parent?: DatabaseTable;
@@ -22,6 +22,7 @@ export function TablesList() {
   const [searchTerm, setSearchTerm] = useState('')
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [collectionNames, setCollectionNames] = useState<Record<string, Record<string, string>>>({})
+  const [collectionStats, setCollectionStats] = useState<Record<string, Record<string, CollectionStats>>>({})
   const { 
     tables, 
     selectedTable,
@@ -68,6 +69,41 @@ export function TablesList() {
 
     if (tables.length > 0) {
       fetchCollectionNames()
+    }
+  }, [tables])
+
+  // Fetch collection statistics for tables with collections
+  useEffect(() => {
+    const fetchCollectionStats = async () => {
+      const statsPromises: Promise<void>[] = []
+      
+      tables.forEach(table => {
+        if (table.collections && table.collections.length > 0) {
+          const tableKey = `${table.schema}.${table.name}`
+          const collectionIds = table.collections.map(c => c.id)
+          
+          const promise = apiClient.getCollectionStats(
+            table.schema,
+            table.name,
+            collectionIds
+          ).then(response => {
+            setCollectionStats(prev => ({
+              ...prev,
+              [tableKey]: response.stats
+            }))
+          }).catch(error => {
+            console.warn(`Failed to fetch collection stats for ${tableKey}:`, error)
+          })
+          
+          statsPromises.push(promise)
+        }
+      })
+
+      await Promise.allSettled(statsPromises)
+    }
+
+    if (tables.length > 0) {
+      fetchCollectionStats()
     }
   }, [tables])
 
@@ -167,13 +203,15 @@ export function TablesList() {
                       selectedTable?.name === table.name &&
                       selectedCollectionId === collection.id
     const collectionKey = `${table.schema}.${table.name}.${collection.id}`
+    const tableKey = `${table.schema}.${table.name}`
+    const stats = collectionStats[tableKey]?.[collection.id]
     
     return (
       <Button
         key={collectionKey}
         variant="ghost"
         className={`
-          w-full justify-start p-3 h-auto mb-1 text-left ml-8 border-l-2 border-l-blue-200
+          w-full justify-start p-2 h-auto mb-1 text-left ml-6 border-l-2 border-l-blue-200
           ${isSelected
             ? 'bg-blue-50 border-blue-200 text-blue-900'
             : 'hover:bg-neutral-50'
@@ -184,23 +222,48 @@ export function TablesList() {
           setSelectedCollection(collection.id)
         }}
       >
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 space-y-1">
           <div className="flex items-center space-x-2">
             <FileText className="h-3 w-3 text-blue-500 flex-shrink-0" />
             <span className="font-medium text-sm truncate">
               {collection.name}
             </span>
-            <Badge variant="outline" className="text-xs h-4 bg-blue-50">
-              {collection.document_count} docs
-            </Badge>
           </div>
-          <div className="flex items-center justify-between mt-1">
-            <span className="text-xs text-neutral-500 font-mono">
-              ID: {collection.id}
-            </span>
-            <Badge variant="secondary" className="text-xs h-4">
-              {collection.type}
-            </Badge>
+          
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Badge variant="outline" className="text-xs h-4 bg-blue-50">
+                {collection.document_count.toLocaleString()} docs
+              </Badge>
+              <Badge variant="secondary" className="text-xs h-4">
+                {collection.type === 'langchain_collection' ? 'LC' : 'Custom'}
+              </Badge>
+            </div>
+          </div>
+          
+          {stats && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs text-neutral-600">
+                <span className="flex items-center space-x-1">
+                  <BarChart3 className="h-3 w-3" />
+                  <span>Avg words: {Math.round(stats.avg_word_count)}</span>
+                </span>
+                <span>~{Math.round(stats.avg_characters)} chars</span>
+              </div>
+              {(stats.latest_document_date || stats.oldest_document_date) && (
+                <div className="text-xs text-neutral-500">
+                  {stats.oldest_document_date && stats.latest_document_date && 
+                    new Date(stats.oldest_document_date).toLocaleDateString() !== new Date(stats.latest_document_date).toLocaleDateString()
+                    ? `${new Date(stats.oldest_document_date).toLocaleDateString()} - ${new Date(stats.latest_document_date).toLocaleDateString()}`
+                    : new Date(stats.latest_document_date || stats.oldest_document_date!).toLocaleDateString()
+                  }
+                </div>
+              )}
+            </div>
+          )}
+          
+          <div className="text-xs text-neutral-400 font-mono truncate">
+            ID: {collection.id}
           </div>
         </div>
       </Button>
@@ -211,14 +274,28 @@ export function TablesList() {
     const isSelected = selectedTable?.schema === table.schema && selectedTable?.name === table.name
     const displayName = getCollectionDisplayName(table, parentCollectionId)
     const hasCollections = table.collections && table.collections.length > 0
+    const totalDocs = hasCollections ? table.collections!.reduce((sum, c) => sum + c.document_count, 0) : 0
+    const tableKey = `${table.schema}.${table.name}`
+    const hasStats = collectionStats[tableKey] && Object.keys(collectionStats[tableKey]).length > 0
+    
+    // Calculate average statistics across all collections
+    let avgWordCount = 0
+    let avgCharCount = 0
+    if (hasStats && hasCollections) {
+      const stats = Object.values(collectionStats[tableKey])
+      if (stats.length > 0) {
+        avgWordCount = Math.round(stats.reduce((sum, s) => sum + s.avg_word_count, 0) / stats.length)
+        avgCharCount = Math.round(stats.reduce((sum, s) => sum + s.avg_characters, 0) / stats.length)
+      }
+    }
     
     return (
       <div key={`${table.schema}.${table.name}`}>
         <Button
           variant="ghost"
           className={`
-            w-full justify-start p-3 h-auto mb-1 text-left
-            ${isChild ? 'ml-6 border-l-2 border-neutral-200' : ''}
+            w-full justify-start p-2 h-auto mb-1 text-left
+            ${isChild ? 'ml-4 border-l-2 border-neutral-200' : ''}
             ${isSelected
               ? 'bg-blue-50 border-blue-200 text-blue-900'
               : 'hover:bg-neutral-50'
@@ -226,7 +303,7 @@ export function TablesList() {
           `}
           onClick={() => handleTableSelect(table)}
         >
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 space-y-1">
             <div className="flex items-center space-x-2">
               {isChild && <GitBranch className="h-3 w-3 text-neutral-400 flex-shrink-0" />}
               {hasCollections && <Database className="h-3 w-3 text-blue-600 flex-shrink-0" />}
@@ -238,29 +315,46 @@ export function TablesList() {
               )}
               <ChevronRight className="h-3 w-3 text-neutral-400 flex-shrink-0" />
             </div>
-            <div className="flex items-center justify-between mt-1">
+            
+            <div className="flex items-center justify-between">
               <span className="text-xs text-neutral-500 font-mono">
                 {table.schema}
               </span>
               <div className="flex items-center space-x-1">
-                <Badge variant="outline" className="text-xs h-5">
-                  {table.vector_columns.length} vectors
+                <Badge variant="outline" className="text-xs h-4">
+                  {table.vector_columns.length} vec
                 </Badge>
                 {hasCollections && (
-                  <Badge variant="secondary" className="text-xs h-5 bg-blue-100 text-blue-700">
-                    {table.collections!.length} collections
+                  <Badge variant="secondary" className="text-xs h-4 bg-blue-100 text-blue-700">
+                    {table.collections!.length} col
                   </Badge>
                 )}
               </div>
             </div>
-            <div className="flex flex-wrap gap-1 mt-2">
+            
+            {hasCollections && (
+              <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center space-x-2">
+                  <span className="text-neutral-600">
+                    {totalDocs.toLocaleString()} total docs
+                  </span>
+                  {hasStats && avgWordCount > 0 && (
+                    <span className="text-neutral-500">
+                      ~{avgWordCount} avg words
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            <div className="flex flex-wrap gap-1">
               {table.vector_columns.map((col) => (
-                <Badge key={col.name} variant="secondary" className="text-xs h-5">
+                <Badge key={col.name} variant="secondary" className="text-xs h-4">
                   {col.name}
                 </Badge>
               ))}
               {table.relationships && table.relationships.length > 0 && (
-                <Badge variant="outline" className="text-xs h-5 text-blue-600">
+                <Badge variant="outline" className="text-xs h-4 text-blue-600">
                   {table.relationships.length} refs
                   {table.relationships.some(rel => rel.name_column) && ' + names'}
                 </Badge>
@@ -304,9 +398,9 @@ export function TablesList() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="p-4 border-b border-neutral-200">
+      <div className="p-3 border-b border-neutral-200 flex-shrink-0">
         <div className="flex items-center space-x-2 mb-3">
-          <Table className="h-5 w-5 text-neutral-600" />
+          <Table className="h-4 w-4 text-neutral-600" />
           <h2 className="font-medium text-neutral-900">Collections</h2>
           <Badge variant="secondary" className="text-xs">
             {totalTables}
@@ -319,7 +413,7 @@ export function TablesList() {
             placeholder="Search tables..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 h-9"
+            className="pl-10 h-8 text-sm"
           />
         </div>
       </div>
@@ -345,15 +439,15 @@ export function TablesList() {
             )}
           </div>
         ) : (
-          <div className="p-2">
+          <div className="p-2 space-y-1">
             {filteredGroups.map((group, groupIndex) => (
-              <div key={groupIndex} className="mb-2">
+              <div key={groupIndex} className="mb-1">
                 {group.parent && (
                   <div className="flex items-center">
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="p-1 h-6 w-6 mr-2"
+                      className="p-1 h-5 w-5 mr-2 flex-shrink-0"
                       onClick={() => toggleGroup(`${group.parent!.schema}.${group.parent!.name}`)}
                     >
                       {group.isExpanded ? 
@@ -361,7 +455,9 @@ export function TablesList() {
                         <ChevronRight className="h-3 w-3" />
                       }
                     </Button>
-                    {renderTable(group.parent)}
+                    <div className="flex-1">
+                      {renderTable(group.parent)}
+                    </div>
                   </div>
                 )}
                 

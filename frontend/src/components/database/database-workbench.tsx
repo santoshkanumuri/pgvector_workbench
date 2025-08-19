@@ -120,7 +120,7 @@ export function DatabaseWorkbench() {
           </div>
         ) : (
           <>
-            <div className="w-80 min-w-80 max-w-80 border-r border-neutral-200 bg-white overflow-hidden">
+            <div className="w-96 min-w-96 max-w-[500px] border-r border-neutral-200 bg-white overflow-hidden">
               <TablesList />
             </div>
             <div className="flex-1 bg-neutral-50 overflow-hidden min-w-0">
