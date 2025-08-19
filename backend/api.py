@@ -160,6 +160,26 @@ async def get_collection_info(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+class CollectionStatsRequest(BaseModel):
+    collection_ids: List[str]
+
+@router.post("/tables/{schema}/{table}/collection-stats")
+async def get_collection_stats(
+    schema: str,
+    table: str,
+    request: CollectionStatsRequest,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    current_user: UserOut = Depends(get_current_user),
+):
+    """Get statistics for collections including document length metrics"""
+    try:
+        mgr = await get_session_manager(current_user.id, x_session_id)
+        stats = await mgr.get_collection_stats(schema, table, request.collection_ids)
+        return {"stats": stats}
+    except Exception as e:
+        print(f"Error in get_collection_stats API: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/tables/{schema}/{table}/search")
 async def search_table(
     schema: str,

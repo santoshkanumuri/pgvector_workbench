@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy, Check } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy, Check, FileText } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 interface TableDataProps {
@@ -32,6 +32,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [selectedVector, setSelectedVector] = useState<number[] | null>(null)
+  const [selectedDocument, setSelectedDocument] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<string>('none')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [copiedStates, setCopiedStates] = useState<Set<string>>(new Set())
@@ -161,6 +162,52 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
     }
 
     if (typeof value === 'string') {
+      // Check if this is a document field and it has substantial content
+      if (isDocumentColumn(columnName) && value.length > 20) {
+        // Create a unique identifier for this document field
+        const uniqueId = rowData?.id || rowData?.uuid || rowData?._id || `row-${rowIndex}`
+        const copyFeedbackKey = `table-document-${uniqueId}-${columnName}`
+        const isCopied = copiedStates.has(copyFeedbackKey)
+        
+        return (
+          <div className="space-y-2 min-w-0 max-w-full">
+            {/* Header with document info and controls */}
+            <div className="flex items-center space-x-2 min-w-0">
+              <Badge variant="outline" className="text-xs flex-shrink-0 bg-green-50 text-green-700 border-green-200">
+                Document
+              </Badge>
+              <div className="flex items-center space-x-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`h-6 px-2 flex-shrink-0 transition-colors ${
+                    isCopied ? 'bg-green-100 text-green-700' : ''
+                  }`}
+                  onClick={() => copyToClipboard(value, copyFeedbackKey)}
+                  title={isCopied ? "Copied!" : "Copy document to clipboard"}
+                >
+                  {isCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 flex-shrink-0"
+                  onClick={() => setSelectedDocument(value)}
+                  title="View document"
+                >
+                  <Eye className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+            {/* Preview of document content */}
+            <div className="text-sm text-neutral-600 truncate">
+              {value.length > 100 ? `${value.substring(0, 100)}...` : value}
+            </div>
+          </div>
+        )
+      }
+      
+      // Regular string handling (unchanged)
       if (value.length > 50) {
         return (
           <div className="min-w-0 max-w-full">
@@ -209,6 +256,14 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
     // Also check for common vector/embedding column names
     const vectorColumnNames = ['embedding', 'embeddings', 'vector', 'vectors', 'features']
     return vectorColumnNames.some(name => 
+      columnName.toLowerCase().includes(name.toLowerCase())
+    )
+  }
+  
+  const isDocumentColumn = (columnName: string) => {
+    // Check for common document column names
+    const documentColumnNames = ['document', 'content', 'text', 'page_content', 'body']
+    return documentColumnNames.some(name => 
       columnName.toLowerCase().includes(name.toLowerCase())
     )
   }
@@ -356,6 +411,11 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                           vector
                         </Badge>
                       )}
+                      {isDocumentColumn(column) && (
+                        <Badge variant="outline" className="text-xs flex-shrink-0 bg-green-50 text-green-700 border-green-200">
+                          document
+                        </Badge>
+                      )}
                     </div>
                   </TableHead>
                 ))}
@@ -473,6 +533,56 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                 <div className="flex items-center justify-center pt-2 border-t">
                   <div className="text-xs text-neutral-500">
                     Hover over values to highlight • Values shown with 6 decimal precision
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Document Dialog */}
+      <Dialog open={!!selectedDocument} onOpenChange={() => setSelectedDocument(null)}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>Document Content</DialogTitle>
+          </DialogHeader>
+          {selectedDocument && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                  <FileText className="h-3 w-3 mr-1" />
+                  Document
+                </Badge>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className={`transition-colors ${
+                    copiedStates.has('dialog-document-full') ? 'bg-green-100 text-green-700 border-green-300' : ''
+                  }`}
+                  onClick={() => copyToClipboard(selectedDocument, 'dialog-document-full')}
+                >
+                  {copiedStates.has('dialog-document-full') ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
+                  {copiedStates.has('dialog-document-full') ? 'Copied!' : 'Copy Document'}
+                </Button>
+              </div>
+              
+              <div className="space-y-3">
+                <div className="text-sm text-neutral-600">
+                  Document content:
+                </div>
+                
+                {/* Document content with good readability */}
+                <div className="h-96 overflow-y-auto overflow-x-hidden border rounded-lg bg-white p-4">
+                  <div className="whitespace-pre-wrap text-sm">
+                    {selectedDocument}
+                  </div>
+                </div>
+                
+                {/* Word count info */}
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <div className="text-xs text-neutral-500">
+                    {selectedDocument.split(/\s+/).filter(Boolean).length} words • {selectedDocument.length} characters • {Math.ceil(selectedDocument.length / 4)} tokens
                   </div>
                 </div>
               </div>

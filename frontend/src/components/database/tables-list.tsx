@@ -177,10 +177,20 @@ export function TablesList() {
       table.schema.toLowerCase().includes(searchTerm.toLowerCase()) ||
       table.vector_columns.some(col => 
         col.name.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+      ) ||
+      // Search in collections
+      (table.collections && table.collections.some(collection => 
+        collection.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        collection.id.toLowerCase().includes(searchTerm.toLowerCase())
+      ))
 
     return (group.parent && searchInTable(group.parent)) ||
-           group.children.some(searchInTable)
+           group.children.some(searchInTable) ||
+           // Search directly in group collections
+           group.collections.some(collection => 
+             collection.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+             collection.id.toLowerCase().includes(searchTerm.toLowerCase())
+           )
   })
 
   const handleTableSelect = (table: DatabaseTable, collectionId?: string) => {
@@ -211,7 +221,7 @@ export function TablesList() {
         key={collectionKey}
         variant="ghost"
         className={`
-          w-full justify-start p-2 h-auto mb-1 text-left ml-6 border-l-2 border-l-blue-200
+          w-full justify-start py-1 px-1.5 h-auto mb-0.5 text-left ml-4 border-l border-l-blue-200
           ${isSelected
             ? 'bg-blue-50 border-blue-200 text-blue-900'
             : 'hover:bg-neutral-50'
@@ -222,36 +232,61 @@ export function TablesList() {
           setSelectedCollection(collection.id)
         }}
       >
-        <div className="flex-1 min-w-0 space-y-1">
-          <div className="flex items-center space-x-2">
-            <FileText className="h-3 w-3 text-blue-500 flex-shrink-0" />
-            <span className="font-medium text-sm truncate">
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <div className="flex items-center">
+            <FileText className="h-3 w-3 text-blue-500 flex-shrink-0 mr-1" />
+            <span className="font-medium text-xs truncate">
               {collection.name}
             </span>
           </div>
           
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Badge variant="outline" className="text-xs h-4 bg-blue-50">
-                {collection.document_count.toLocaleString()} docs
-              </Badge>
-              <Badge variant="secondary" className="text-xs h-4">
-                {collection.type === 'langchain_collection' ? 'LC' : 'Custom'}
-              </Badge>
-            </div>
+          <div className="flex flex-wrap gap-1 mt-0.5">
+            <Badge variant="outline" className="text-[10px] h-3.5 px-1 bg-blue-50">
+              {collection.document_count.toLocaleString()} docs
+            </Badge>
+            <Badge variant="secondary" className="text-[10px] h-3.5 px-1">
+              {collection.type === 'langchain_collection' ? 'LC' : 'Custom'}
+            </Badge>
           </div>
           
           {stats && (
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-xs text-neutral-600">
-                <span className="flex items-center space-x-1">
-                  <BarChart3 className="h-3 w-3" />
-                  <span>Avg words: {Math.round(stats.avg_word_count)}</span>
-                </span>
-                <span>~{Math.round(stats.avg_characters)} chars</span>
+            <div className="flex flex-col gap-y-0.5 text-[10px] mt-0.5">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center text-neutral-600">
+                  <BarChart3 className="h-2.5 w-2.5 mr-0.5" />
+                  <span className="whitespace-nowrap">Avg: {Math.round(stats.avg_word_count)}</span>
+                </div>
+                <div className="text-neutral-600 whitespace-nowrap">
+                  ~{Math.round(stats.avg_characters)} chars
+                </div>
               </div>
+              <div className="flex justify-between items-center">
+                <div className="text-neutral-600 whitespace-nowrap">
+                  Min: {stats.min_word_count}
+                </div>
+                <div className="text-neutral-600 whitespace-nowrap">
+                  Max: {stats.max_word_count}
+                </div>
+              </div>
+              <div className="flex justify-between items-center">
+                <div className="text-neutral-600 whitespace-nowrap text-blue-600">
+                  ~{Math.round(stats.avg_token_count)} tokens
+                </div>
+                <div className="text-neutral-500 whitespace-nowrap text-xs">
+                  per document
+                </div>
+              </div>
+              
+              {stats.document_column && (
+                <div className="mt-0.5 overflow-hidden">
+                  <span className="font-mono bg-neutral-100 px-1 rounded text-[10px] text-neutral-600 inline-block max-w-full overflow-hidden text-ellipsis">
+                    {stats.document_column}
+                  </span>
+                </div>
+              )}
+              
               {(stats.latest_document_date || stats.oldest_document_date) && (
-                <div className="text-xs text-neutral-500">
+                <div className="text-[10px] text-neutral-500 overflow-hidden text-ellipsis whitespace-nowrap">
                   {stats.oldest_document_date && stats.latest_document_date && 
                     new Date(stats.oldest_document_date).toLocaleDateString() !== new Date(stats.latest_document_date).toLocaleDateString()
                     ? `${new Date(stats.oldest_document_date).toLocaleDateString()} - ${new Date(stats.latest_document_date).toLocaleDateString()}`
@@ -262,8 +297,8 @@ export function TablesList() {
             </div>
           )}
           
-          <div className="text-xs text-neutral-400 font-mono truncate">
-            ID: {collection.id}
+          <div className="text-[10px] text-neutral-400 font-mono truncate mt-0.5">
+            {collection.id.substring(0, 8)}...
           </div>
         </div>
       </Button>
@@ -294,8 +329,8 @@ export function TablesList() {
         <Button
           variant="ghost"
           className={`
-            w-full justify-start p-2 h-auto mb-1 text-left
-            ${isChild ? 'ml-4 border-l-2 border-neutral-200' : ''}
+            w-full justify-start py-1 px-1.5 h-auto mb-0.5 text-left
+            ${isChild ? 'ml-3 border-l border-neutral-200' : ''}
             ${isSelected
               ? 'bg-blue-50 border-blue-200 text-blue-900'
               : 'hover:bg-neutral-50'
@@ -303,29 +338,29 @@ export function TablesList() {
           `}
           onClick={() => handleTableSelect(table)}
         >
-          <div className="flex-1 min-w-0 space-y-1">
-            <div className="flex items-center space-x-2">
-              {isChild && <GitBranch className="h-3 w-3 text-neutral-400 flex-shrink-0" />}
-              {hasCollections && <Database className="h-3 w-3 text-blue-600 flex-shrink-0" />}
-              <span className="font-medium text-sm truncate">
+          <div className="flex-1 min-w-0 space-y-0.5">
+            <div className="flex items-center gap-1">
+              {isChild && <GitBranch className="h-2.5 w-2.5 text-neutral-400 flex-shrink-0" />}
+              {hasCollections && <Database className="h-2.5 w-2.5 text-blue-600 flex-shrink-0" />}
+              <span className="font-medium text-xs truncate">
                 {displayName}
               </span>
               {table.relationships && table.relationships.length > 0 && (
-                <Link className="h-3 w-3 text-blue-500 flex-shrink-0" />
+                <Link className="h-2.5 w-2.5 text-blue-500 flex-shrink-0" />
               )}
-              <ChevronRight className="h-3 w-3 text-neutral-400 flex-shrink-0" />
+              <ChevronRight className="h-2.5 w-2.5 text-neutral-400 flex-shrink-0 ml-auto" />
             </div>
             
             <div className="flex items-center justify-between">
-              <span className="text-xs text-neutral-500 font-mono">
+              <span className="text-[10px] text-neutral-500 font-mono">
                 {table.schema}
               </span>
-              <div className="flex items-center space-x-1">
-                <Badge variant="outline" className="text-xs h-4">
+              <div className="flex items-center gap-1">
+                <Badge variant="outline" className="text-[10px] h-3.5 px-1">
                   {table.vector_columns.length} vec
                 </Badge>
                 {hasCollections && (
-                  <Badge variant="secondary" className="text-xs h-4 bg-blue-100 text-blue-700">
+                  <Badge variant="secondary" className="text-[10px] h-3.5 px-1 bg-blue-100 text-blue-700">
                     {table.collections!.length} col
                   </Badge>
                 )}
@@ -333,32 +368,47 @@ export function TablesList() {
             </div>
             
             {hasCollections && (
-              <div className="flex items-center justify-between text-xs">
-                <div className="flex items-center space-x-2">
-                  <span className="text-neutral-600">
-                    {totalDocs.toLocaleString()} total docs
-                  </span>
+              <div className="flex flex-col gap-y-0.5 text-[10px]">
+                <div className="flex justify-between items-center">
+                  <div className="text-neutral-600 whitespace-nowrap">
+                    {totalDocs.toLocaleString()} docs
+                  </div>
                   {hasStats && avgWordCount > 0 && (
-                    <span className="text-neutral-500">
+                    <div className="text-neutral-500 whitespace-nowrap">
                       ~{avgWordCount} avg words
-                    </span>
+                    </div>
                   )}
                 </div>
+                {hasStats && (
+                  <div className="overflow-hidden">
+                    <div className="flex flex-wrap gap-0.5">
+                      {Object.values(collectionStats[tableKey]).map(stat => 
+                        stat.document_column && (
+                          <span key={stat.id} className="font-mono bg-neutral-100 px-0.5 rounded text-[9px] text-neutral-600 inline-block max-w-full overflow-hidden text-ellipsis">
+                            {stat.document_column}
+                          </span>
+                        )
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             
-            <div className="flex flex-wrap gap-1">
-              {table.vector_columns.map((col) => (
-                <Badge key={col.name} variant="secondary" className="text-xs h-4">
-                  {col.name}
-                </Badge>
-              ))}
-              {table.relationships && table.relationships.length > 0 && (
-                <Badge variant="outline" className="text-xs h-4 text-blue-600">
-                  {table.relationships.length} refs
-                  {table.relationships.some(rel => rel.name_column) && ' + names'}
-                </Badge>
-              )}
+            <div className="overflow-hidden mt-0.5">
+              <div className="flex flex-wrap gap-0.5">
+                {table.vector_columns.map((col) => (
+                  <Badge key={col.name} variant="secondary" className="text-[9px] h-3.5 px-1 max-w-full overflow-hidden text-ellipsis">
+                    {col.name}
+                  </Badge>
+                ))}
+                {table.relationships && table.relationships.length > 0 && (
+                  <Badge variant="outline" className="text-[9px] h-3.5 px-1 text-blue-600 whitespace-nowrap">
+                    {table.relationships.length} refs
+                    {table.relationships.some(rel => rel.name_column) && ' +'}
+                  </Badge>
+                )}
+              </div>
             </div>
           </div>
         </Button>
@@ -398,61 +448,63 @@ export function TablesList() {
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="p-3 border-b border-neutral-200 flex-shrink-0">
-        <div className="flex items-center space-x-2 mb-3">
-          <Table className="h-4 w-4 text-neutral-600" />
-          <h2 className="font-medium text-neutral-900">Collections</h2>
-          <Badge variant="secondary" className="text-xs">
-            {totalTables}
-          </Badge>
+      <div className="p-2 border-b border-neutral-200 flex-shrink-0">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center space-x-1.5">
+            <Table className="h-3.5 w-3.5 text-neutral-600" />
+            <h2 className="font-medium text-sm text-neutral-900">Collections</h2>
+            <Badge variant="secondary" className="text-xs px-1.5 h-4">
+              {totalTables}
+            </Badge>
+          </div>
         </div>
         
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-neutral-400" />
+          <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-neutral-400" />
           <Input
             placeholder="Search tables..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 h-8 text-sm"
+            className="pl-7 py-1 h-7 text-xs"
           />
         </div>
       </div>
 
       {/* Tables List */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
         {filteredGroups.length === 0 ? (
-          <div className="p-4 text-center">
+          <div className="p-3 text-center">
             {searchTerm ? (
               <div>
-                <p className="text-sm text-neutral-500">No tables found</p>
-                <p className="text-xs text-neutral-400 mt-1">
+                <p className="text-xs text-neutral-500">No tables found</p>
+                <p className="text-[10px] text-neutral-400 mt-0.5">
                   Try adjusting your search term
                 </p>
               </div>
             ) : (
               <div>
-                <p className="text-sm text-neutral-500">No vector tables found</p>
-                <p className="text-xs text-neutral-400 mt-1">
+                <p className="text-xs text-neutral-500">No vector tables found</p>
+                <p className="text-[10px] text-neutral-400 mt-0.5">
                   Make sure your database has tables with vector columns
                 </p>
               </div>
             )}
           </div>
         ) : (
-          <div className="p-2 space-y-1">
+          <div className="p-1.5 space-y-0.5">
             {filteredGroups.map((group, groupIndex) => (
-              <div key={groupIndex} className="mb-1">
+              <div key={groupIndex} className="mb-0.5">
                 {group.parent && (
                   <div className="flex items-center">
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="p-1 h-5 w-5 mr-2 flex-shrink-0"
+                      className="p-0.5 h-4 w-4 mr-1 flex-shrink-0"
                       onClick={() => toggleGroup(`${group.parent!.schema}.${group.parent!.name}`)}
                     >
                       {group.isExpanded ? 
-                        <ChevronDown className="h-3 w-3" /> : 
-                        <ChevronRight className="h-3 w-3" />
+                        <ChevronDown className="h-2.5 w-2.5" /> : 
+                        <ChevronRight className="h-2.5 w-2.5" />
                       }
                     </Button>
                     <div className="flex-1">

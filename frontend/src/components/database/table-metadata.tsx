@@ -4,18 +4,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
-import { Database, HardDrive, Layers, Zap } from 'lucide-react'
-import { TableMetadata as TableMetadataType } from '@/lib/types'
+import { Database, HardDrive, Layers, Zap, BarChart3 } from 'lucide-react'
+import { TableMetadata as TableMetadataType, CollectionStats } from '@/lib/types'
 import { useDatabaseStore } from '@/stores/database'
 import { useMemo } from 'react'
 
 interface TableMetadataProps {
   metadata: TableMetadataType | null | undefined
   isLoading: boolean
+  collectionStats?: CollectionStats | null
+  selectedCollectionId?: string | null
 }
 
-export function TableMetadata({ metadata, isLoading }: TableMetadataProps) {
-  const { selectedTable, selectedCollectionId, tables } = useDatabaseStore()
+export function TableMetadata({ metadata, isLoading, collectionStats, selectedCollectionId }: TableMetadataProps) {
+  const { selectedTable, selectedCollectionId: storeSelectedCollectionId, tables } = useDatabaseStore()
   const selectedCollectionName = useMemo(() => {
     if (!selectedTable || !selectedCollectionId) return null
     const tableEntry = tables.find(t => t.schema === selectedTable.schema && t.name === selectedTable.name)
@@ -91,19 +93,43 @@ export function TableMetadata({ metadata, isLoading }: TableMetadataProps) {
   return (
     <div className="h-full overflow-auto bg-white">
       <div className="p-6 space-y-6">
+        {/* Collection Info Banner */}
+        {selectedCollectionId && selectedCollectionName && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <div className="flex items-center space-x-2 mb-2">
+              <span className="font-mono text-neutral-500">{selectedTable?.schema}.{selectedTable?.name}</span>
+              <span className="text-neutral-400">›</span>
+              <span className="font-semibold text-blue-700" title={selectedCollectionName}>{selectedCollectionName}</span>
+              <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">Collection</Badge>
+            </div>
+            <p className="text-sm text-blue-700">
+              Viewing metadata for the selected collection. Collection-specific statistics are shown below.
+            </p>
+          </div>
+        )}
+        
         {/* Overview Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Rows</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                {selectedCollectionId ? 'Documents' : 'Total Rows'}
+              </CardTitle>
               <Database className="h-4 w-4 text-neutral-600" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {metadata.row_count.toLocaleString()}
+                {selectedCollectionId && collectionStats 
+                  ? (tables.find(t => t.schema === selectedTable?.schema && t.name === selectedTable?.name)
+                      ?.collections?.find(c => c.id === selectedCollectionId)?.document_count || 0).toLocaleString()
+                  : metadata.row_count.toLocaleString()
+                }
               </div>
               <p className="text-xs text-neutral-500 mt-1">
-                {metadata.row_count_precise ? 'Exact count' : 'Estimated'}
+                {selectedCollectionId 
+                  ? 'Documents in this collection' 
+                  : (metadata.row_count_precise ? 'Exact count' : 'Estimated')
+                }
               </p>
             </CardContent>
           </Card>
@@ -146,6 +172,57 @@ export function TableMetadata({ metadata, isLoading }: TableMetadataProps) {
             </p>
           </CardContent>
         </Card>
+
+        {/* Collection-specific stats */}
+        {selectedCollectionId && collectionStats && (
+          <>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Avg Words</CardTitle>
+                <BarChart3 className="h-4 w-4 text-blue-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-blue-700">{Math.round(collectionStats.avg_word_count)}</div>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Average words per document
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Word Range</CardTitle>
+                <BarChart3 className="h-4 w-4 text-blue-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  <span className="text-blue-700">{collectionStats.min_word_count}</span>
+                  <span className="text-neutral-400 mx-2">-</span>
+                  <span className="text-blue-700">{collectionStats.max_word_count}</span>
+                </div>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Min and max words per document
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Tokens</CardTitle>
+                <BarChart3 className="h-4 w-4 text-green-600" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-700">{Math.round(collectionStats.avg_token_count)}</div>
+                <p className="text-xs text-neutral-500 mt-1">
+                  Average tokens per document
+                </p>
+                <div className="text-xs text-neutral-600 mt-2 bg-neutral-50 p-1 rounded">
+                  <span className="font-medium">Note:</span> LLMs process text as tokens (≈4 chars or ¾ of a word)
+                </div>
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

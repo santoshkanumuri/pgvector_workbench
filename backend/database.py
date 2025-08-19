@@ -597,6 +597,131 @@ class DatabaseManager:
         except Exception as e:
             raise Exception(f"Failed to get table data: {e}")
     
+    async def get_collection_stats(self, schema: str, table: str, collection_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """Get statistics for collections including document length metrics"""
+        if not self.is_connected():
+            raise Exception("No database connection available")
+        
+        try:
+            async with self.get_connection() as conn:
+                stats = {}
+                
+                for collection_id in collection_ids:
+                    # Check if the table has a document column (common in RAG applications)
+                    # First, get all column names for the table
+                    columns_query = f"""
+                    SELECT column_name, data_type 
+                    FROM information_schema.columns 
+                    WHERE table_schema = $1 AND table_name = $2
+                    """
+                    columns = await conn.fetch(columns_query, schema, table)
+                    
+                    # Look for potential document columns (text, json, jsonb types with names like document, content, text, etc.)
+                    document_columns = []
+                    for col in columns:
+                        col_name = col['column_name'].lower()
+                        col_type = col['data_type'].lower()
+                        
+                        if col_type in ('text', 'varchar', 'character varying', 'json', 'jsonb') and (
+                            'document' in col_name or 
+                            'content' in col_name or 
+                            'text' in col_name or 
+                            col_name in ('page_content', 'content', 'document', 'text', 'body')
+                        ):
+                            document_columns.append(col['column_name'])
+                    
+                    # If no document columns found, use any text column as fallback
+                    if not document_columns:
+                        for col in columns:
+                            if col['data_type'].lower() in ('text', 'varchar', 'character varying'):
+                                document_columns.append(col['column_name'])
+                                break
+                    
+                    # Calculate statistics for each document column
+                    collection_stats = {
+                        "id": collection_id,
+                        "avg_word_count": 0,
+                        "median_word_count": 0,
+                        "min_word_count": 0,
+                        "max_word_count": 0,
+                        "total_characters": 0,
+                        "avg_characters": 0,
+                        "avg_token_count": 0,
+                        "tokens_per_character": 0,
+                        "document_column": None
+                    }
+                    
+                    # Get document dates if available
+                    try:
+                        dates_query = f"""
+                        SELECT 
+                            MIN(created_at) as oldest_date,
+                            MAX(created_at) as latest_date
+                        FROM "{schema}"."{table}"
+                        WHERE collection_id = $1
+                        """
+                        dates = await conn.fetchrow(dates_query, collection_id)
+                        if dates and dates['oldest_date']:
+                            collection_stats["oldest_document_date"] = dates['oldest_date'].isoformat() if dates['oldest_date'] else None
+                            collection_stats["latest_document_date"] = dates['latest_date'].isoformat() if dates['latest_date'] else None
+                    except Exception as e:
+                        print(f"Could not get document dates: {e}")
+                    
+                    # Calculate statistics for each document column
+                    for doc_col in document_columns:
+                        try:
+                            # Calculate average, min, max word count and character count
+                            stats_query = f"""
+                            SELECT 
+                                AVG(array_length(regexp_split_to_array("{doc_col}"::text, '\\s+'), 1)) as avg_words,
+                                PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY array_length(regexp_split_to_array("{doc_col}"::text, '\\s+'), 1)) as median_words,
+                                MIN(array_length(regexp_split_to_array("{doc_col}"::text, '\\s+'), 1)) as min_words,
+                                MAX(array_length(regexp_split_to_array("{doc_col}"::text, '\\s+'), 1)) as max_words,
+                                AVG(LENGTH("{doc_col}"::text)) as avg_chars,
+                                SUM(LENGTH("{doc_col}"::text)) as total_chars,
+                                COUNT(*) as doc_count
+                            FROM "{schema}"."{table}"
+                            WHERE collection_id = $1 AND "{doc_col}" IS NOT NULL
+                            """
+                            
+                            col_stats = await conn.fetchrow(stats_query, collection_id)
+                            
+                            if col_stats and col_stats['avg_words'] is not None:
+                                collection_stats["avg_word_count"] = float(col_stats['avg_words'])
+                                collection_stats["median_word_count"] = float(col_stats['median_words']) if col_stats['median_words'] else 0
+                                collection_stats["min_word_count"] = int(col_stats['min_words']) if col_stats['min_words'] is not None else 0
+                                collection_stats["max_word_count"] = int(col_stats['max_words']) if col_stats['max_words'] is not None else 0
+                                collection_stats["avg_characters"] = float(col_stats['avg_chars'])
+                                collection_stats["total_characters"] = int(col_stats['total_chars'])
+                                collection_stats["document_column"] = doc_col
+                                
+                                # Calculate token counts based on the rule of thumb:
+                                # 1 token ≈ 4 characters or 3/4 of a word in English
+                                # We'll use the character-based calculation as it's more reliable
+                                avg_chars = float(col_stats['avg_chars'])
+                                avg_words = float(col_stats['avg_words'])
+                                
+                                # Calculate tokens using both methods and take the average for better accuracy
+                                tokens_by_chars = avg_chars / 4.0
+                                tokens_by_words = avg_words * 0.75
+                                
+                                # Use the character-based calculation as primary method
+                                collection_stats["avg_token_count"] = tokens_by_chars
+                                
+                                # Calculate tokens per character ratio
+                                collection_stats["tokens_per_character"] = 0.25  # 1 token per 4 characters
+                                break  # Use the first valid document column
+                        except Exception as e:
+                            print(f"Error calculating stats for column {doc_col}: {e}")
+                    
+                    stats[collection_id] = collection_stats
+                
+                return stats
+                
+        except Exception as e:
+            print(f"Error in get_collection_stats: {e}")
+            raise Exception(f"Failed to get collection statistics: {str(e)}")
+
     async def get_collection_info(self, schema: str, table: str, collection_id: str) -> Dict[str, Any]:
         """Get information about a specific collection including vector dimensions"""
         if not self.is_connected():
