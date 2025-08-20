@@ -19,8 +19,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy, Check, FileText } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy, Check, FileText, Palette } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import TokenVisualizer from './token-visualizer'
+import { tokenizeText } from '@/lib/tokenizer'
 
 interface TableDataProps {
   schema: string
@@ -33,6 +35,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
   const [pageSize, setPageSize] = useState(20)
   const [selectedVector, setSelectedVector] = useState<number[] | null>(null)
   const [selectedDocument, setSelectedDocument] = useState<string | null>(null)
+  const [showTokenVisualizer, setShowTokenVisualizer] = useState(false)
   const [sortBy, setSortBy] = useState<string>('none')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [copiedStates, setCopiedStates] = useState<Set<string>>(new Set())
@@ -542,7 +545,12 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
       </Dialog>
 
       {/* Document Dialog */}
-      <Dialog open={!!selectedDocument} onOpenChange={() => setSelectedDocument(null)}>
+      <Dialog open={!!selectedDocument} onOpenChange={(open) => {
+        if (!open) {
+          setSelectedDocument(null)
+          setShowTokenVisualizer(false)
+        }
+      }}>
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>Document Content</DialogTitle>
@@ -554,36 +562,61 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                   <FileText className="h-3 w-3 mr-1" />
                   Document
                 </Badge>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  className={`transition-colors ${
-                    copiedStates.has('dialog-document-full') ? 'bg-green-100 text-green-700 border-green-300' : ''
-                  }`}
-                  onClick={() => copyToClipboard(selectedDocument, 'dialog-document-full')}
-                >
-                  {copiedStates.has('dialog-document-full') ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
-                  {copiedStates.has('dialog-document-full') ? 'Copied!' : 'Copy Document'}
-                </Button>
+                <div className="flex items-center space-x-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => setShowTokenVisualizer(!showTokenVisualizer)}
+                    className="bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
+                  >
+                    <Palette className="h-4 w-4 mr-2" />
+                    {showTokenVisualizer ? 'Hide' : 'Visualize'} Tokens
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    className={`transition-colors ${
+                      copiedStates.has('dialog-document-full') ? 'bg-green-100 text-green-700 border-green-300' : ''
+                    }`}
+                    onClick={() => copyToClipboard(selectedDocument, 'dialog-document-full')}
+                  >
+                    {copiedStates.has('dialog-document-full') ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
+                    {copiedStates.has('dialog-document-full') ? 'Copied!' : 'Copy Document'}
+                  </Button>
+                </div>
               </div>
               
-              <div className="space-y-3">
-                <div className="text-sm text-neutral-600">
-                  Document content:
-                </div>
-                
-                {/* Document content with good readability */}
-                <div className="h-96 overflow-y-auto overflow-x-hidden border rounded-lg bg-white p-4">
-                  <div className="whitespace-pre-wrap text-sm">
-                    {selectedDocument}
+              {showTokenVisualizer ? (
+                <div className="space-y-3">
+                  <div className="text-sm text-neutral-600">
+                    Token visualization:
+                  </div>
+                  <div className="h-96 border rounded-lg bg-white">
+                    <TokenVisualizer 
+                      tokens={tokenizeText(selectedDocument)} 
+                      theme="light"
+                    />
                   </div>
                 </div>
-                
-                {/* Word count info */}
-                <div className="flex items-center justify-between pt-2 border-t">
-                  <div className="text-xs text-neutral-500">
-                    {selectedDocument.split(/\s+/).filter(Boolean).length} words • {selectedDocument.length} characters • {Math.ceil(selectedDocument.length / 4)} tokens
+              ) : (
+                <div className="space-y-3">
+                  <div className="text-sm text-neutral-600">
+                    Document content:
                   </div>
+                  
+                  {/* Document content with good readability */}
+                  <div className="h-96 overflow-y-auto overflow-x-hidden border rounded-lg bg-white p-4">
+                    <div className="whitespace-pre-wrap text-sm">
+                      {selectedDocument}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Word count info */}
+              <div className="flex items-center justify-between pt-2 border-t">
+                <div className="text-xs text-neutral-500">
+                  {selectedDocument.split(/\s+/).filter(Boolean).length} words • {selectedDocument.length} characters • {tokenizeText(selectedDocument).length} tokens
                 </div>
               </div>
             </div>
