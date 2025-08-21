@@ -54,6 +54,31 @@ const TokenVisualizer: React.FC<TokenVisualizerProps> = ({ tokens, theme = 'ligh
     );
   }, [tokens, searchTerm]);
 
+  const metrics = useMemo(() => {
+    const totalTokens = tokens.length;
+    const totalCharacters = tokens.reduce((sum, t) => sum + t.length, 0);
+    const averageCharactersPerToken = totalTokens > 0 ? totalCharacters / totalTokens : 0;
+    const whitespaceTokenCount = tokens.reduce((count, t) => count + (/^\s+$/.test(t) ? 1 : 0), 0);
+    const punctuationTokenCount = tokens.reduce((count, t) => count + (/^[^\w\s]+$/.test(t) ? 1 : 0), 0);
+    const uniqueTokenCount = new Set(tokens).size;
+    const tokenDensityPer100Chars = totalCharacters > 0 ? (totalTokens / (totalCharacters / 100)) : 0; // tokens per 100 chars
+    const uniqueRatio = totalTokens > 0 ? (uniqueTokenCount / totalTokens) : 0;
+    const whitespaceRatio = totalTokens > 0 ? (whitespaceTokenCount / totalTokens) : 0;
+    const punctuationRatio = totalTokens > 0 ? (punctuationTokenCount / totalTokens) : 0;
+    return {
+      totalTokens,
+      totalCharacters,
+      averageCharactersPerToken,
+      whitespaceTokenCount,
+      punctuationTokenCount,
+      uniqueTokenCount,
+      tokenDensityPer100Chars,
+      uniqueRatio,
+      whitespaceRatio,
+      punctuationRatio,
+    };
+  }, [tokens]);
+
   return (
     <div className="w-full h-full bg-white/50 dark:bg-slate-950/70 rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden relative transition-colors duration-300 backdrop-blur-sm flex flex-col">
       {/* Search Bar */}
@@ -71,6 +96,37 @@ const TokenVisualizer: React.FC<TokenVisualizerProps> = ({ tokens, theme = 'ligh
               {filteredTokens.length}/{tokens.length}
             </div>
           )}
+        </div>
+        {/* Metrics */}
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 p-2">
+            <div className="text-slate-500 dark:text-slate-400">Tokens</div>
+            <div className="font-mono text-slate-800 dark:text-slate-200">{metrics.totalTokens.toLocaleString()}</div>
+          </div>
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 p-2">
+            <div className="text-slate-500 dark:text-slate-400">Avg chars/token</div>
+            <div className="font-mono text-slate-800 dark:text-slate-200">{metrics.averageCharactersPerToken.toFixed(2)}</div>
+          </div>
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 p-2">
+            <div className="text-slate-500 dark:text-slate-400">Tokens / 100 chars</div>
+            <div className="font-mono text-slate-800 dark:text-slate-200">{metrics.tokenDensityPer100Chars.toFixed(2)}</div>
+          </div>
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 p-2">
+            <div className="text-slate-500 dark:text-slate-400">Unique tokens</div>
+            <div className="font-mono text-slate-800 dark:text-slate-200">{metrics.uniqueTokenCount.toLocaleString()} ({(metrics.uniqueRatio * 100).toFixed(1)}%)</div>
+          </div>
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 p-2">
+            <div className="text-slate-500 dark:text-slate-400">Whitespace</div>
+            <div className="font-mono text-slate-800 dark:text-slate-200">{metrics.whitespaceTokenCount.toLocaleString()} ({(metrics.whitespaceRatio * 100).toFixed(1)}%)</div>
+          </div>
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 p-2">
+            <div className="text-slate-500 dark:text-slate-400">Punctuation</div>
+            <div className="font-mono text-slate-800 dark:text-slate-200">{metrics.punctuationTokenCount.toLocaleString()} ({(metrics.punctuationRatio * 100).toFixed(1)}%)</div>
+          </div>
+          <div className="rounded border border-slate-200 dark:border-slate-700 bg-white/60 dark:bg-slate-800/60 p-2">
+            <div className="text-slate-500 dark:text-slate-400">Characters</div>
+            <div className="font-mono text-slate-800 dark:text-slate-200">{metrics.totalCharacters.toLocaleString()}</div>
+          </div>
         </div>
       </div>
 

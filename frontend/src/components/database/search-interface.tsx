@@ -165,7 +165,6 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
     try {
       await navigator.clipboard.writeText(text)
       // You could add a toast notification here if you have a toast system
-      console.log('Vector copied to clipboard')
       
       // Show feedback
       if (feedbackKey) {
@@ -189,7 +188,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
         textArea.select()
         document.execCommand('copy')
         document.body.removeChild(textArea)
-        console.log('Vector copied to clipboard (fallback)')
+
         
         // Show feedback for fallback too
         if (feedbackKey) {
@@ -224,8 +223,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
       const copyFeedbackKey = `search-vector-${uniqueId}-${columnName || 'unknown'}`
       const isCopied = copiedStates.has(copyFeedbackKey)
       
-      // Debug: Log the unique identifier (remove this in production)
-      console.log(`Search copy key for ${columnName}:`, copyFeedbackKey, 'Available fields:', Object.keys(rowData || {}))
+
       
       return (
         <div className="space-y-2 min-w-0 max-w-full">
@@ -336,10 +334,10 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
     <div className="h-full flex flex-col bg-white">
       {/* Collapsible Search Form Header */}
       <div className={`border-b border-neutral-200 bg-white flex-shrink-0 transition-all duration-300 ${
-        isSearchFormExpanded ? 'pb-6' : 'pb-0'
+        isSearchFormExpanded ? 'pb-4' : 'pb-0'
       }`}>
         {/* Always Visible Header with Toggle */}
-        <div className="px-6 py-4 border-b border-neutral-100">
+        <div className="px-4 py-3 border-b border-neutral-100">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <Settings className="h-5 w-5 text-neutral-600" />
@@ -375,10 +373,10 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
 
         {/* Collapsible Search Form Content */}
         <div className={`transition-all duration-300 overflow-hidden ${
-          isSearchFormExpanded ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'
+          isSearchFormExpanded ? 'max-h-[700px] opacity-100' : 'max-h-0 opacity-0'
         }`}>
-          <div className="px-6 pt-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div className="px-4 pt-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           {/* Text Search */}
           <Card>
             <CardHeader className="pb-3">
@@ -503,11 +501,11 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
 
         {/* Search Controls */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-2">
               <Label htmlFor="limit">Limit</Label>
               <Select value={limit.toString()} onValueChange={(value) => setLimit(Number(value))}>
-                <SelectTrigger className="w-20">
+                <SelectTrigger className="w-24">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -522,7 +520,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
             <div className="flex items-center space-x-2">
               <Label htmlFor="sort-by">Sort By</Label>
               <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-40">
+                <SelectTrigger className="w-44">
                   <SelectValue placeholder="No sorting" />
                 </SelectTrigger>
                 <SelectContent>
@@ -540,7 +538,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
               <div className="flex items-center space-x-2">
                 <Label htmlFor="sort-order">Order</Label>
                 <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as 'asc' | 'desc')}>
-                  <SelectTrigger className="w-20">
+                  <SelectTrigger className="w-24">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -572,8 +570,8 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
       {/* Results - Properly Sized Scrollable Area */}
       <div className="flex-1 min-h-0 overflow-hidden bg-neutral-50">
         {searchMutation.data && (
-          <div className="h-full flex flex-col p-6">
-            <div className="flex items-center justify-between mb-4 flex-shrink-0">
+          <div className="h-full flex flex-col p-4">
+            <div className="flex items-center justify-between mb-3 flex-shrink-0">
               <div className="flex items-center space-x-3">
                 <h4 className="font-medium text-neutral-900">Search Results</h4>
                 {selectedCollectionId && (
@@ -604,7 +602,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
                     <TableHeader className="sticky top-0 bg-white border-b z-10">
                       <TableRow className="hover:bg-transparent">
                         {Object.keys(searchMutation.data.data[0] || {}).map((column) => (
-                          <TableHead key={column} className="font-medium font-mono text-sm whitespace-nowrap min-w-[120px] max-w-[250px] px-4 py-3">
+                          <TableHead key={column} className="font-medium font-mono text-sm whitespace-nowrap min-w-[140px] max-w-[360px] px-3 py-2.5">
                             <div className="truncate flex items-center space-x-1" title={column}>
                               <span>{column}</span>
                               {column === 'similarity_score' && (
@@ -621,7 +619,7 @@ export function SearchInterface({ schema, table, metadata }: SearchInterfaceProp
                       {searchMutation.data.data.map((row, index) => (
                         <TableRow key={index} className="hover:bg-neutral-50">
                           {Object.entries(row).map(([column, value]) => (
-                            <TableCell key={column} className="min-w-[120px] max-w-[250px] px-4 py-3 align-top">
+                            <TableCell key={column} className="min-w-[140px] max-w-[360px] px-3 py-2.5 align-top">
                               <div className="overflow-hidden">
                                 {column === 'similarity_score' ? (
                                   <div className="flex items-center space-x-2">

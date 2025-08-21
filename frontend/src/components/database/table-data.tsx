@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ChevronLeft, ChevronRight, Eye, Download, MoreVertical, Copy, Check, FileText, Palette } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, MoreVertical, Copy, Check, FileText, Palette } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import TokenVisualizer from './token-visualizer'
 import { tokenizeText } from '@/lib/tokenizer'
@@ -61,11 +61,14 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
     enabled: !!(schema && table),
   })
 
+
+
+
+
   const copyToClipboard = async (text: string, feedbackKey?: string) => {
     try {
       await navigator.clipboard.writeText(text)
       // You could add a toast notification here if you have a toast system
-      console.log('Vector copied to clipboard')
       
       // Show feedback
       if (feedbackKey) {
@@ -89,7 +92,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
         textArea.select()
         document.execCommand('copy')
         document.body.removeChild(textArea)
-        console.log('Vector copied to clipboard (fallback)')
+
         
         // Show feedback for fallback too
         if (feedbackKey) {
@@ -127,8 +130,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
       const copyFeedbackKey = `table-vector-${uniqueId}-${columnName}`
       const isCopied = copiedStates.has(copyFeedbackKey)
       
-      // Debug: Log the unique identifier (remove this in production)
-      console.log(`Copy key for ${columnName}:`, copyFeedbackKey, 'Available fields:', Object.keys(rowData || {}))
+
       
       return (
         <div className="space-y-2 min-w-0 max-w-full">
@@ -358,7 +360,9 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
           </div>
 
           <div className="flex items-center space-x-2">
-            <Label htmlFor="sort-by" className="text-sm text-neutral-600">Sort By:</Label>
+            <Label htmlFor="sort-by" className="text-sm text-neutral-600">
+              Sort By{selectedCollectionId ? ' (Collection)' : ''}:
+            </Label>
             <Select value={sortBy} onValueChange={(value) => {
               setSortBy(value)
               setCurrentPage(1) // Reset to first page when sorting changes
@@ -368,11 +372,30 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">No sorting</SelectItem>
-                {metadata?.columns.map((column) => (
-                  <SelectItem key={column.column_name} value={column.column_name}>
-                    {column.column_name}
-                  </SelectItem>
-                ))}
+                {/* First try to use metadata columns */}
+                {metadata?.columns && metadata.columns.length > 0 ? (
+                  metadata.columns.map((column) => (
+                    <SelectItem key={column.column_name} value={column.column_name}>
+                      {column.column_name}
+                    </SelectItem>
+                  ))
+                ) : (
+                  /* Fallback: use columns from actual data if available */
+                  data?.data?.[0] ? (
+                    Object.keys(data.data[0]).map((columnName) => (
+                      <SelectItem key={columnName} value={columnName}>
+                        {columnName}
+                      </SelectItem>
+                    ))
+                  ) : (
+                    <SelectItem value="debug-info" disabled>
+                      {!metadata ? 'Loading metadata...' : 
+                       !metadata.columns ? 'Metadata loaded but no columns property found' :
+                       metadata.columns.length === 0 ? 'Metadata loaded but columns array is empty - using data fallback' :
+                       'Unknown state'}
+                    </SelectItem>
+                  )
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -392,10 +415,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
             </div>
           )}
 
-          <Button variant="outline" size="sm">
-            <Download className="h-4 w-4 mr-2" />
-            Export
-          </Button>
+
         </div>
       </div>
 
@@ -551,7 +571,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
           setShowTokenVisualizer(false)
         }
       }}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-auto">
+        <DialogContent className="w-[900px] max-w-[calc(100%-2rem)] sm:max-w-none max-h-[80vh] overflow-y-auto overflow-x-hidden">
           <DialogHeader>
             <DialogTitle>Document Content</DialogTitle>
           </DialogHeader>
@@ -606,7 +626,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                   
                   {/* Document content with good readability */}
                   <div className="h-96 overflow-y-auto overflow-x-hidden border rounded-lg bg-white p-4">
-                    <div className="whitespace-pre-wrap text-sm">
+                    <div className="whitespace-pre-wrap break-words text-sm">
                       {selectedDocument}
                     </div>
                   </div>

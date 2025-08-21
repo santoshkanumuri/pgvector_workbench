@@ -3,14 +3,17 @@
 import { useDatabaseStore } from '@/stores/database'
 import { useAuthStore } from '@/stores/auth'
 import { AuthPanel } from './auth-panel'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { apiClient } from '@/lib/api'
 import { TablesList } from './tables-list'
 import { TableView } from './table-view'
 import { Header } from './header'
 import { useNotifications } from '@/components/providers/notification-provider'
+import { Button } from '@/components/ui/button'
+import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 
 export function DatabaseWorkbench() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const { isConnected, selectedTable, isLoadingTables, reset: resetDatabase } = useDatabaseStore()
   const { token, activeSessionId } = useAuthStore()
   const { setConnectionState, setTables, setLoadingTables } = useDatabaseStore()
@@ -120,20 +123,57 @@ export function DatabaseWorkbench() {
           </div>
         ) : (
           <>
-            <div className="w-72 min-w-64 max-w-80 border-r border-neutral-200 bg-white overflow-y-auto overflow-x-hidden">
-              <TablesList />
+            {/* Collapsible Sidebar */}
+            <div className={`relative transition-all duration-300 ease-in-out ${
+              sidebarCollapsed ? 'w-12' : 'w-72 min-w-64 max-w-80'
+            }`}>
+              <div className={`h-full border-r border-slate-200 bg-gradient-to-b from-white to-slate-50 overflow-hidden ${
+                sidebarCollapsed ? 'w-12' : 'w-full'
+              }`}>
+                {!sidebarCollapsed && <TablesList />}
+                
+                {/* Sidebar Toggle Button */}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`absolute -right-3 top-4 h-6 w-6 rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50 transition-all duration-200 z-10 ${
+                    sidebarCollapsed ? 'rotate-180' : ''
+                  }`}
+                  onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+                >
+                  <ChevronLeft className="h-3 w-3" />
+                </Button>
+                
+                {/* Collapsed Sidebar Content */}
+                {sidebarCollapsed && (
+                  <div className="h-full flex flex-col items-center py-4 space-y-2">
+                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                      <span className="text-white text-xs font-bold">DB</span>
+                    </div>
+                    <div className="w-0.5 h-8 bg-gradient-to-b from-slate-200 to-slate-300"></div>
+                    <div className="text-xs text-slate-500 text-center px-1 leading-tight">
+                      {isConnected ? 'Connected' : 'Disconnected'}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex-1 bg-neutral-50 overflow-hidden min-w-0">
+            
+            {/* Main Content */}
+            <div className="flex-1 bg-gradient-to-br from-slate-50 to-white overflow-hidden min-w-0">
               {selectedTable ? (
                 <TableView />
               ) : (
                 <div className="flex flex-1 items-center justify-center">
                   <div className="text-center">
-                    <h3 className="text-lg font-medium text-neutral-900">
+                    <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                      <span className="text-white text-xl font-bold">DB</span>
+                    </div>
+                    <h3 className="text-lg font-medium text-slate-800 mb-2">
                       Select a Collection
                     </h3>
-                    <p className="mt-1 text-sm text-neutral-500">
-                      Choose a table from the sidebar to view its vector data
+                    <p className="text-sm text-slate-600 max-w-md">
+                      Choose a table from the sidebar to view its vector data and explore your database
                     </p>
                   </div>
                 </div>

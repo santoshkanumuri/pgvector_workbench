@@ -90,6 +90,62 @@ async def get_table_metadata(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/tables/{schema}/{table}/schema")
+async def get_table_schema_endpoint(
+    schema: str,
+    table: str,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    current_user: UserOut = Depends(get_current_user),
+):
+    try:
+        mgr = await get_session_manager(current_user.id, x_session_id)
+        data = await mgr.get_table_schema(schema, table)
+        return {"columns": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tables/{schema}/{table}/stats")
+async def get_table_stats_endpoint(
+    schema: str,
+    table: str,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    current_user: UserOut = Depends(get_current_user),
+):
+    try:
+        mgr = await get_session_manager(current_user.id, x_session_id)
+        data = await mgr.get_table_stats(schema, table)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tables/{schema}/{table}/vector-indexes")
+async def get_vector_indexes_endpoint(
+    schema: str,
+    table: str,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    current_user: UserOut = Depends(get_current_user),
+):
+    try:
+        mgr = await get_session_manager(current_user.id, x_session_id)
+        data = await mgr.get_vector_indexes(schema, table)
+        return {"indexes": data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/tables/{schema}/{table}/relations")
+async def get_table_relations_endpoint(
+    schema: str,
+    table: str,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    current_user: UserOut = Depends(get_current_user),
+):
+    try:
+        mgr = await get_session_manager(current_user.id, x_session_id)
+        data = await mgr.get_table_relations(schema, table)
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/tables/{schema}/{table}/data")
 async def get_table_data(
     schema: str,

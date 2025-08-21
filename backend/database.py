@@ -1,9 +1,11 @@
 import asyncpg
+import os
 import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 import json
+import re
 from pydantic import BaseModel
 
 class ConnectionInfo(BaseModel):
@@ -19,6 +21,18 @@ class DatabaseManager:
         self._connection_string: Optional[str] = None
         self._last_activity = datetime.now()
         self._connection_lock = asyncio.Lock()  # Protect connection operations
+        # Lightweight per-instance caches
+        self._tables_cache: Optional[Dict[str, Any]] = None  # {"data": [...], "ts": datetime}
+        self._metadata_cache: Dict[str, Dict[str, Any]] = {}  # key -> {"data": {...}, "ts": datetime}
+        # TTLs (seconds)
+        try:
+            self._tables_cache_ttl = int(os.getenv("APP_TABLES_CACHE_TTL", "60"))
+        except Exception:
+            self._tables_cache_ttl = 60
+        try:
+            self._metadata_cache_ttl = int(os.getenv("APP_METADATA_CACHE_TTL", "30"))
+        except Exception:
+            self._metadata_cache_ttl = 30
     
     async def connect(self, connection_string: str) -> bool:
         """Connect to PostgreSQL database and test connection with proper error handling"""
@@ -89,6 +103,12 @@ class DatabaseManager:
         """Update last activity timestamp for connection management"""
         self._last_activity = datetime.now()
     
+    @staticmethod
+    def _is_safe_identifier(name: Optional[str]) -> bool:
+        if not name:
+            return False
+        return all(c.isalnum() or c == '_' for c in name)
+    
     @asynccontextmanager
     async def get_connection(self):
         """Get database connection from pool with activity tracking and error handling"""
@@ -141,6 +161,9 @@ class DatabaseManager:
             raise Exception("No database connection available")
         
         try:
+            # Serve from cache if fresh
+            if self._tables_cache and (datetime.now() - self._tables_cache["ts"]).total_seconds() < self._tables_cache_ttl:
+                return self._tables_cache["data"]
             async with self.get_connection() as conn:
                 # Get vector tables
                 query = """
@@ -334,7 +357,9 @@ class DatabaseManager:
                                 "name_column": collection_name_column
                             })
                 
-                return list(tables.values())
+                result = list(tables.values())
+                self._tables_cache = {"data": result, "ts": datetime.now()}
+                return result
                 
         except Exception as e:
             raise Exception(f"Failed to get tables with vectors: {e}")
@@ -343,6 +368,8 @@ class DatabaseManager:
         """Get collection names mapped to their IDs"""
         if not self.is_connected():
             raise Exception("No database connection available")
+        if not (self._is_safe_identifier(id_column) and self._is_safe_identifier(name_column)):
+            raise Exception("Invalid identifier provided")
         
         try:
             async with self.get_connection() as conn:
@@ -367,6 +394,10 @@ class DatabaseManager:
             raise Exception("No database connection available")
         try:
             print(f"Getting metadata for table: {schema}.{table}")
+            cache_key = f"{schema}.{table}"
+            cached = self._metadata_cache.get(cache_key)
+            if cached and (datetime.now() - cached["ts"]).total_seconds() < self._metadata_cache_ttl:
+                return cached["data"]
             async with self.get_connection() as conn:
                 # Use a single query to get multiple pieces of information efficiently
                 metadata_query = """
@@ -503,7 +534,7 @@ class DatabaseManager:
                             vector_info[col['column_name']] = {"dimension": None}
 
                 print(f"Metadata retrieval completed for {schema}.{table}")
-                return {
+                result_obj = {
                     "schema": schema,
                     "table": table,
                     "row_count": row_count,
@@ -514,12 +545,149 @@ class DatabaseManager:
                     "size_pretty": result['size_pretty'] or "Unknown",
                     "indexes": result['indexes'] or [],
                 }
+                self._metadata_cache[cache_key] = {"data": result_obj, "ts": datetime.now()}
+                return result_obj
                 
         except Exception as e:
             print(f"ERROR in get_table_metadata for {schema}.{table}: {e}")
             import traceback
             traceback.print_exc()
             raise Exception(f"Failed to get table metadata: {e}")
+
+    async def get_table_schema(self, schema: str, table: str) -> List[Dict[str, Any]]:
+        """Return detailed column info: data types, nullability, defaults, identity, lengths."""
+        if not self.is_connected():
+            raise Exception("No database connection available")
+        try:
+            async with self.get_connection() as conn:
+                query = """
+                SELECT 
+                    column_name,
+                    data_type,
+                    udt_name,
+                    is_nullable,
+                    column_default,
+                    character_maximum_length,
+                    numeric_precision,
+                    numeric_scale,
+                    is_identity,
+                    identity_generation,
+                    collation_name
+                FROM information_schema.columns
+                WHERE table_schema = $1 AND table_name = $2
+                ORDER BY ordinal_position
+                """
+                rows = await conn.fetch(query, schema, table)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            raise Exception(f"Failed to get table schema: {e}")
+
+    async def get_table_stats(self, schema: str, table: str) -> Dict[str, Any]:
+        """Return table stats from pg_stat/pg_statio plus size breakdown."""
+        if not self.is_connected():
+            raise Exception("No database connection available")
+        try:
+            async with self.get_connection() as conn:
+                query = """
+                SELECT 
+                    s.seq_scan, s.idx_scan, s.n_tup_ins, s.n_tup_upd, s.n_tup_del,
+                    s.n_live_tup, s.n_dead_tup,
+                    s.last_vacuum, s.last_autovacuum, s.last_analyze, s.last_autoanalyze,
+                    st.heap_blks_read, st.heap_blks_hit, st.idx_blks_read, st.idx_blks_hit,
+                    pg_total_relation_size(c.oid) AS size_total,
+                    pg_relation_size(c.oid) AS size_heap,
+                    pg_indexes_size(c.oid) AS size_indexes
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                LEFT JOIN pg_stat_all_tables s ON s.relid = c.oid
+                LEFT JOIN pg_statio_all_tables st ON st.relid = c.oid
+                WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'r'
+                """
+                row = await conn.fetchrow(query, schema, table)
+                return dict(row) if row else {}
+        except Exception as e:
+            raise Exception(f"Failed to get table stats: {e}")
+
+    async def get_vector_indexes(self, schema: str, table: str) -> List[Dict[str, Any]]:
+        """List vector indexes and parsed parameters from index definitions."""
+        if not self.is_connected():
+            raise Exception("No database connection available")
+        try:
+            async with self.get_connection() as conn:
+                q = """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = $1 AND tablename = $2
+                ORDER BY indexname
+                """
+                rows = await conn.fetch(q, schema, table)
+                results: List[Dict[str, Any]] = []
+                for r in rows:
+                    idx = {"indexname": r["indexname"], "indexdef": r["indexdef"], "method": None, "column": None, "operator_class": None, "params": {}}
+                    m = re.search(r"USING\s+(ivfflat|hnsw)\s*\(([^\)]+)\)", r["indexdef"], flags=re.IGNORECASE)
+                    if m:
+                        idx["method"] = m.group(1).lower()
+                        colspec = m.group(2)
+                        parts = colspec.split()
+                        if parts:
+                            idx["column"] = parts[0].strip('"')
+                        if len(parts) > 1:
+                            idx["operator_class"] = parts[1]
+                        wp = re.search(r"WITH\s*\(([^\)]*)\)", r["indexdef"], flags=re.IGNORECASE)
+                        if wp:
+                            params_str = wp.group(1)
+                            params: Dict[str, Any] = {}
+                            for kv in [p.strip() for p in params_str.split(',') if p.strip()]:
+                                if '=' in kv:
+                                    k, v = kv.split('=', 1)
+                                    params[k.strip()] = v.strip()
+                            idx["params"] = params
+                    results.append(idx)
+                return results
+        except Exception as e:
+            raise Exception(f"Failed to get vector indexes: {e}")
+
+    async def get_table_relations(self, schema: str, table: str) -> Dict[str, Any]:
+        """Return foreign key relations: references and referenced_by."""
+        if not self.is_connected():
+            raise Exception("No database connection available")
+        try:
+            async with self.get_connection() as conn:
+                refs_q = """
+                SELECT 
+                    tc.constraint_name,
+                    kcu.column_name,
+                    ccu.table_schema AS referenced_schema,
+                    ccu.table_name AS referenced_table,
+                    ccu.column_name AS referenced_column
+                FROM information_schema.table_constraints AS tc 
+                JOIN information_schema.key_column_usage AS kcu
+                  ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage AS ccu
+                  ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1 AND tc.table_name = $2
+                ORDER BY kcu.ordinal_position
+                """
+                outgoing = [dict(r) for r in await conn.fetch(refs_q, schema, table)]
+                incoming_q = """
+                SELECT 
+                    tc.table_schema AS referencing_schema,
+                    tc.table_name AS referencing_table,
+                    kcu.column_name AS referencing_column,
+                    ccu.column_name AS referenced_column,
+                    tc.constraint_name
+                FROM information_schema.table_constraints AS tc 
+                JOIN information_schema.key_column_usage AS kcu
+                  ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.constraint_column_usage AS ccu
+                  ON ccu.constraint_name = tc.constraint_name AND ccu.constraint_schema = tc.constraint_schema
+                WHERE tc.constraint_type = 'FOREIGN KEY' AND ccu.table_schema = $1 AND ccu.table_name = $2
+                ORDER BY kcu.ordinal_position
+                """
+                incoming = [dict(r) for r in await conn.fetch(incoming_q, schema, table)]
+                return {"references": outgoing, "referenced_by": incoming}
+        except Exception as e:
+            raise Exception(f"Failed to get table relations: {e}")
     
     async def get_table_data(
         self, 
@@ -556,6 +724,8 @@ class DatabaseManager:
                 # Build query with optional sorting
                 order_by = ''
                 if sort_by:
+                    if not self._is_safe_identifier(sort_by):
+                        raise Exception(f"Invalid sort column: {sort_by}")
                     sort_direction = 'DESC' if sort_order.lower() == 'desc' else 'ASC'
                     order_by = f' ORDER BY "{sort_by}" {sort_direction}'
                 
@@ -842,6 +1012,8 @@ class DatabaseManager:
 
                 # Modify base query to include similarity score if doing vector search
                 if vector_query and vector_column:
+                    if not self._is_safe_identifier(vector_column):
+                        raise Exception(f"Invalid vector column: {vector_column}")
                     # Build vector literal string for PostgreSQL: '[1,2,3]'
                     vector_literal = '[' + ','.join(str(x) for x in vector_query) + ']'
                     # Choose operator based on metric and convert to similarity score
@@ -877,6 +1049,8 @@ class DatabaseManager:
                     params.append(collection_id)
 
                 if text_query and search_column:
+                    if not self._is_safe_identifier(search_column):
+                        raise Exception(f"Invalid search column: {search_column}")
                     param_index += 1
                     where_conditions.append(f'"{search_column}"::text ILIKE ${param_index}')
                     params.append(f'%{text_query}%')
@@ -891,6 +1065,8 @@ class DatabaseManager:
                     else:  # l2
                         order_by = f'ORDER BY (\"{vector_column}\" <-> \'{vector_literal}\'::vector)'
                 elif sort_by:
+                    if not self._is_safe_identifier(sort_by):
+                        raise Exception(f"Invalid sort column: {sort_by}")
                     # Regular column sorting
                     sort_direction = 'DESC' if sort_order.lower() == 'desc' else 'ASC'
                     order_by = f'ORDER BY "{sort_by}" {sort_direction}'

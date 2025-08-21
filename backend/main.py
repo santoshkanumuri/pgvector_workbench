@@ -4,6 +4,7 @@ import uvicorn
 import asyncio
 from datetime import datetime
 from contextlib import asynccontextmanager
+import os
 from api import router as api_router
 from auth import router as auth_router, get_current_user, UserOut
 from session_manager import init_metadata_pool, list_user_sessions, create_session, connect_session, disconnect_session, get_session_record, cleanup_inactive, get_metadata_pool
@@ -49,11 +50,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configure CORS for frontend
+# Configure CORS for frontend (hardened)
+origins_env = os.getenv("APP_CORS_ORIGINS", "*")
+if origins_env == "*" or origins_env.strip() == "":
+    cors_allow_origins = ["*"]
+    cors_allow_credentials = False  # cannot use * with credentials
+else:
+    cors_allow_origins = [o.strip() for o in origins_env.split(",") if o.strip()]
+    cors_allow_credentials = True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_allow_origins,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

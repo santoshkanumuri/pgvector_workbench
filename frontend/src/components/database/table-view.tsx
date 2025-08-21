@@ -9,7 +9,7 @@ import { TableData } from './table-data'
 import { SearchInterface } from './search-interface'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Database, Search, BarChart3 } from 'lucide-react'
-import { CollectionStats } from '@/lib/types'
+import { CollectionStats, CollectionInfo, TableSchemaColumn, TableStats, VectorIndexDetail, TableRelations } from '@/lib/types'
 
 export function TableView() {
   const { selectedTable, selectedCollectionId, tables } = useDatabaseStore()
@@ -45,9 +45,56 @@ export function TableView() {
     enabled: !!selectedTable && !!selectedCollectionId,
   })
 
-  // Debug: Log metadata and collection stats when they change
-  console.log('Table metadata in view:', metadata)
-  console.log('Collection stats in view:', collectionStats)
+  // Fetch collection info (dimensions, sample) when a collection is selected
+  const { data: collectionInfo } = useQuery({
+    queryKey: ['collection-info', selectedTable?.schema, selectedTable?.name, selectedCollectionId],
+    queryFn: async () => {
+      if (!selectedTable || !selectedCollectionId) return null;
+      return apiClient.getCollectionInfo(selectedTable.schema, selectedTable.name, selectedCollectionId);
+    },
+    enabled: !!selectedTable && !!selectedCollectionId,
+  })
+
+  // Fetch extended metadata
+  const { data: tableSchema } = useQuery({
+    queryKey: ['table-schema', selectedTable?.schema, selectedTable?.name],
+    queryFn: async () => {
+      if (!selectedTable) return null;
+      const res = await apiClient.getTableSchema(selectedTable.schema, selectedTable.name);
+      return res.columns;
+    },
+    enabled: !!selectedTable,
+  })
+
+  const { data: tableStats } = useQuery({
+    queryKey: ['table-stats', selectedTable?.schema, selectedTable?.name],
+    queryFn: async () => {
+      if (!selectedTable) return null;
+      return apiClient.getTableStats(selectedTable.schema, selectedTable.name);
+    },
+    enabled: !!selectedTable,
+  })
+
+  const { data: vectorIndexes } = useQuery({
+    queryKey: ['vector-indexes', selectedTable?.schema, selectedTable?.name],
+    queryFn: async () => {
+      if (!selectedTable) return null;
+      const res = await apiClient.getVectorIndexes(selectedTable.schema, selectedTable.name);
+      return res.indexes;
+    },
+    enabled: !!selectedTable,
+  })
+
+  const { data: tableRelations } = useQuery({
+    queryKey: ['table-relations', selectedTable?.schema, selectedTable?.name],
+    queryFn: async () => {
+      if (!selectedTable) return null;
+      return apiClient.getTableRelations(selectedTable.schema, selectedTable.name);
+    },
+    enabled: !!selectedTable,
+  })
+
+
 
   if (!selectedTable) {
     return null
@@ -56,7 +103,7 @@ export function TableView() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Table Header - Fixed */}
-      <div className="border-b border-neutral-200 bg-white px-6 py-4 flex-shrink-0">
+      <div className="border-b border-neutral-200 bg-white px-4 py-3 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-600">
@@ -122,8 +169,8 @@ export function TableView() {
 
       {/* Content Tabs - Flexible */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col overflow-hidden">
-        <div className="border-b border-neutral-200 bg-white px-6 flex-shrink-0">
-          <TabsList className="grid w-full max-w-md grid-cols-3 h-9">
+        <div className="border-b border-neutral-200 bg-white px-4 flex-shrink-0">
+          <TabsList className="w-full h-9 flex gap-2">
             <TabsTrigger value="data" className="flex items-center space-x-2">
               <Database className="h-4 w-4" />
               <span>Data</span>
@@ -162,6 +209,11 @@ export function TableView() {
               isLoading={isLoadingMetadata}
               collectionStats={selectedCollectionId ? collectionStats : undefined}
               selectedCollectionId={selectedCollectionId}
+              collectionInfo={selectedCollectionId ? collectionInfo as CollectionInfo | null : undefined}
+              extendedSchema={tableSchema as TableSchemaColumn[] | undefined}
+              extendedStats={tableStats as TableStats | undefined}
+              vectorIndexes={vectorIndexes as VectorIndexDetail[] | undefined}
+              relations={tableRelations as TableRelations | undefined}
             />
           </TabsContent>
         </div>

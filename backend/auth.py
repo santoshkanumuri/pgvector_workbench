@@ -119,6 +119,9 @@ async def register(user: UserCreate):
 
 @router.post("/login", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    if JWT_SECRET == "change-me":
+        # Warning for insecure default secret
+        print("WARNING: Using default JWT secret. Set APP_JWT_SECRET in production.")
     pool = get_metadata_pool()
     async with pool.acquire() as conn:
         user_row = await get_user_by_username(conn, form_data.username)

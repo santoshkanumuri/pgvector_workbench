@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Separator } from '@/components/ui/separator'
 import { Database, HardDrive, Layers, Zap, BarChart3 } from 'lucide-react'
-import { TableMetadata as TableMetadataType, CollectionStats } from '@/lib/types'
+import { TableMetadata as TableMetadataType, CollectionStats, CollectionInfo, TableSchemaColumn, TableStats, VectorIndexDetail, TableRelations } from '@/lib/types'
 import { useDatabaseStore } from '@/stores/database'
 import { useMemo } from 'react'
 
@@ -14,9 +14,14 @@ interface TableMetadataProps {
   isLoading: boolean
   collectionStats?: CollectionStats | null
   selectedCollectionId?: string | null
+  collectionInfo?: CollectionInfo | null
+  extendedSchema?: TableSchemaColumn[]
+  extendedStats?: TableStats
+  vectorIndexes?: VectorIndexDetail[]
+  relations?: TableRelations
 }
 
-export function TableMetadata({ metadata, isLoading, collectionStats, selectedCollectionId }: TableMetadataProps) {
+export function TableMetadata({ metadata, isLoading, collectionStats, selectedCollectionId, collectionInfo, extendedSchema, extendedStats, vectorIndexes, relations }: TableMetadataProps) {
   const { selectedTable, selectedCollectionId: storeSelectedCollectionId, tables } = useDatabaseStore()
   const selectedCollectionName = useMemo(() => {
     if (!selectedTable || !selectedCollectionId) return null
@@ -92,7 +97,7 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
 
   return (
     <div className="h-full overflow-auto bg-white">
-      <div className="p-6 space-y-6">
+      <div className="p-4 space-y-4">
         {/* Collection Info Banner */}
         {selectedCollectionId && selectedCollectionName && (
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
@@ -109,7 +114,7 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
         )}
         
         {/* Overview Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
@@ -223,19 +228,45 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
             </Card>
           </>
         )}
+
+        {/* Collection Info Details */}
+        {selectedCollectionId && collectionInfo && (
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Collection Details</CardTitle>
+              <CardDescription>
+                Vector settings and a sample of the embedding
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-xs text-neutral-500 mb-1">Vector dimensions</div>
+                  <div className="font-mono text-sm">{collectionInfo.vector_dimensions}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-neutral-500 mb-1">Sample embedding</div>
+                  <div className="font-mono text-xs break-all bg-neutral-50 p-2 rounded">
+                    [{collectionInfo.sample_embedding.slice(0, 8).join(', ')}{collectionInfo.sample_embedding.length > 8 ? ', …' : ''}]
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Columns Info */}
         <Card>
-          <CardHeader>
+          <CardHeader className="pb-3">
             <CardTitle className="text-base">Columns</CardTitle>
             <CardDescription>
               All columns in this table with their data types
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {metadata.columns.map((column, index) => (
                 <div key={column.column_name} className="flex items-center justify-between">
                   <div className="flex items-center space-x-2">
@@ -266,7 +297,7 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
 
         {/* Vector Information */}
         <Card>
-          <CardHeader>
+          <CardHeader className="pb-3">
             <CardTitle className="text-base">Vector Columns</CardTitle>
             <CardDescription>
               Detailed information about vector columns and dimensions
@@ -274,16 +305,21 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
           </CardHeader>
           <CardContent>
             {vectorColumns.length > 0 ? (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 {vectorColumns.map((columnName) => (
                   <div key={columnName} className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="font-medium font-mono text-sm">
                         {columnName}
                       </span>
-                      <Badge className="bg-green-100 text-green-800">
-                        {metadata.vector_info[columnName].dimension} dimensions
-                      </Badge>
+                      <div className="flex gap-2">
+                        <Badge className="bg-green-100 text-green-800">
+                          {metadata.vector_info[columnName].dimension} dimensions
+                        </Badge>
+                        {Array.isArray(vectorIndexes) && vectorIndexes.some(v => v.column === columnName) && (
+                          <Badge className="bg-blue-100 text-blue-800">Indexed</Badge>
+                        )}
+                      </div>
                     </div>
                     <Separator />
                   </div>
@@ -300,26 +336,27 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
 
         {/* Indexes */}
         <Card className="lg:col-span-2">
-          <CardHeader>
+          <CardHeader className="pb-3">
             <CardTitle className="text-base">Indexes</CardTitle>
             <CardDescription>
               Database indexes including vector indexes (HNSW, IVFFlat)
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {Array.isArray(metadata.indexes) && metadata.indexes.length > 0 ? (
-              <div className="space-y-3">
-                {metadata.indexes.map((index, idx) => (
+            {Array.isArray(vectorIndexes) && vectorIndexes.length > 0 ? (
+              <div className="space-y-2">
+                {vectorIndexes.map((index) => (
                   <div key={index.indexname} className="border rounded-lg p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-medium text-sm font-mono">
                         {index.indexname}
                       </span>
                       <div className="flex space-x-2">
-                        {index.vector_index_type && (
-                          <Badge className="bg-blue-100 text-blue-800 text-xs">
-                            {index.vector_index_type.toUpperCase()}
-                          </Badge>
+                        {index.method && (
+                          <Badge className="bg-blue-100 text-blue-800 text-xs">{index.method.toUpperCase()}</Badge>
+                        )}
+                        {index.column && (
+                          <Badge variant="secondary" className="text-xs">{index.column}</Badge>
                         )}
                         <Badge variant="outline" className="text-xs">
                           Index
@@ -329,6 +366,11 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
                     <code className="text-xs bg-neutral-100 block p-2 rounded font-mono break-all">
                       {index.indexdef}
                     </code>
+                    {index.params && Object.keys(index.params).length > 0 && (
+                      <div className="mt-2 text-xs text-neutral-700">
+                        Params: {Object.entries(index.params).map(([k, v]) => `${k}=${v}`).join(', ')}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -340,6 +382,93 @@ export function TableMetadata({ metadata, isLoading, collectionStats, selectedCo
             )}
           </CardContent>
         </Card>
+
+        {/* Extended Schema */}
+        {Array.isArray(extendedSchema) && extendedSchema.length > 0 && (
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Detailed Columns</CardTitle>
+              <CardDescription>Defaults, identity, lengths, precision</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {extendedSchema.map((col) => (
+                  <div key={col.column_name} className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm">{col.column_name}</span>
+                      <Badge variant="outline" className="text-xs">{col.data_type}</Badge>
+                    </div>
+                    <div className="text-xs text-neutral-600 flex items-center gap-2">
+                      {col.column_default && <span>default: <span className="font-mono">{col.column_default}</span></span>}
+                      {col.is_identity === 'YES' && <Badge className="bg-amber-100 text-amber-800">identity</Badge>}
+                      {(col.character_maximum_length || col.numeric_precision) && (
+                        <span>
+                          size: {col.character_maximum_length ?? `${col.numeric_precision}${col.numeric_scale ? `,${col.numeric_scale}` : ''}`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Table Stats */}
+        {extendedStats && (
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Table Stats</CardTitle>
+              <CardDescription>Access patterns and size breakdown</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                <div><div className="text-neutral-500 text-xs">Seq scans</div><div className="font-mono">{extendedStats.seq_scan ?? 0}</div></div>
+                <div><div className="text-neutral-500 text-xs">Idx scans</div><div className="font-mono">{extendedStats.idx_scan ?? 0}</div></div>
+                <div><div className="text-neutral-500 text-xs">Live tuples</div><div className="font-mono">{extendedStats.n_live_tup ?? 0}</div></div>
+                <div><div className="text-neutral-500 text-xs">Dead tuples</div><div className="font-mono">{extendedStats.n_dead_tup ?? 0}</div></div>
+                <div><div className="text-neutral-500 text-xs">Heap hits</div><div className="font-mono">{extendedStats.heap_blks_hit ?? 0}</div></div>
+                <div><div className="text-neutral-500 text-xs">Heap reads</div><div className="font-mono">{extendedStats.heap_blks_read ?? 0}</div></div>
+                <div><div className="text-neutral-500 text-xs">Idx hits</div><div className="font-mono">{extendedStats.idx_blks_hit ?? 0}</div></div>
+                <div><div className="text-neutral-500 text-xs">Idx reads</div><div className="font-mono">{extendedStats.idx_blks_read ?? 0}</div></div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Relations */}
+        {relations && (
+          <Card className="lg:col-span-2">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Relations</CardTitle>
+              <CardDescription>Foreign key references</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <div className="font-medium text-sm mb-2">References</div>
+                  <div className="space-y-1">
+                    {relations.references.length > 0 ? relations.references.map((r, idx) => (
+                      <div key={idx} className="text-xs">
+                        <span className="font-mono">{r.column_name}</span> → <span className="font-mono">{r.referenced_schema}.{r.referenced_table}.{r.referenced_column}</span>
+                      </div>
+                    )) : <div className="text-xs text-neutral-500">None</div>}
+                  </div>
+                </div>
+                <div>
+                  <div className="font-medium text-sm mb-2">Referenced by</div>
+                  <div className="space-y-1">
+                    {relations.referenced_by.length > 0 ? relations.referenced_by.map((r, idx) => (
+                      <div key={idx} className="text-xs">
+                        <span className="font-mono">{r.referencing_schema}.{r.referencing_table}.{r.referencing_column}</span> → <span className="font-mono">{r.referenced_column}</span>
+                      </div>
+                    )) : <div className="text-xs text-neutral-500">None</div>}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
       </div>
     </div>
