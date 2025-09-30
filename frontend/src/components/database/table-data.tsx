@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import React, { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from '@/lib/api'
 import { TableMetadata as TableMetadataType } from '@/lib/types'
@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
-import { ChevronLeft, ChevronRight, Eye, MoreVertical, Copy, Check, FileText, Palette } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Eye, MoreVertical, Copy, Check, FileText, Palette, Filter, X, Download, Columns } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import TokenVisualizer from './token-visualizer'
 import { tokenizeText } from '@/lib/tokenizer'
@@ -36,9 +36,14 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
   const [selectedVector, setSelectedVector] = useState<number[] | null>(null)
   const [selectedDocument, setSelectedDocument] = useState<string | null>(null)
   const [showTokenVisualizer, setShowTokenVisualizer] = useState(false)
+  const [selectedJson, setSelectedJson] = useState<any>(null)
+  const [selectedJsonColumnName, setSelectedJsonColumnName] = useState<string>('')
   const [sortBy, setSortBy] = useState<string>('none')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const [copiedStates, setCopiedStates] = useState<Set<string>>(new Set())
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set())
+  const [showColumnManager, setShowColumnManager] = useState(false)
   
   const { selectedCollectionId, tables } = useDatabaseStore()
   const selectedCollectionName = useMemo(() => {
@@ -64,6 +69,76 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
 
 
 
+
+  // JSON syntax highlighting function
+  const formatJsonWithColors = (obj: any): React.ReactElement => {
+    const formatValue = (value: any, depth: number = 0): React.ReactElement => {
+      const indent = '  '.repeat(depth)
+      
+      if (value === null) {
+        return <span className="text-neutral-500">null</span>
+      }
+      
+      if (typeof value === 'boolean') {
+        return <span className="text-orange-400">{value.toString()}</span>
+      }
+      
+      if (typeof value === 'number') {
+        return <span className="text-blue-400">{value}</span>
+      }
+      
+      if (typeof value === 'string') {
+        return <span className="text-green-400">"{value}"</span>
+      }
+      
+      if (Array.isArray(value)) {
+        if (value.length === 0) {
+          return <span>[]</span>
+        }
+        
+        return (
+          <>
+            <span>[</span>
+            {'\n'}
+            {value.map((item, index) => (
+              <span key={index}>
+                {indent}  {formatValue(item, depth + 1)}
+                {index < value.length - 1 ? ',' : ''}
+                {'\n'}
+              </span>
+            ))}
+            {indent}<span>]</span>
+          </>
+        )
+      }
+      
+      if (typeof value === 'object') {
+        const entries = Object.entries(value)
+        if (entries.length === 0) {
+          return <span>{'{}'}</span>
+        }
+        
+        return (
+          <>
+            <span>{'{'}</span>
+            {'\n'}
+            {entries.map(([key, val], index) => (
+              <span key={key}>
+                {indent}  <span className="text-cyan-300">"{key}"</span>: {formatValue(val, depth + 1)}
+                {index < entries.length - 1 ? ',' : ''}
+                {'\n'}
+              </span>
+            ))}
+            {indent}<span>{'}'}</span>
+          </>
+        )
+      }
+      
+      return <span>{String(value)}</span>
+    }
+    
+    return <>{formatValue(obj)}</>
+  }
 
   const copyToClipboard = async (text: string, feedbackKey?: string) => {
     try {
@@ -167,6 +242,63 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
     }
 
     if (typeof value === 'string') {
+      // Check if this is a JSON column with stringified JSON
+      if (isJsonColumn(columnName)) {
+        try {
+          const parsedJson = JSON.parse(value)
+          if (typeof parsedJson === 'object' && parsedJson !== null) {
+            // Handle as JSON object
+            const uniqueId = rowData?.id || rowData?.uuid || rowData?._id || `row-${rowIndex}`
+            const copyFeedbackKey = `table-json-${uniqueId}-${columnName}`
+            const isCopied = copiedStates.has(copyFeedbackKey)
+            
+            return (
+              <div className="space-y-2 min-w-0 max-w-full">
+                {/* Header with JSON info and controls */}
+                <div className="flex items-center space-x-2 min-w-0">
+                  <Badge variant="outline" className="text-xs flex-shrink-0 bg-purple-50 text-purple-700 border-purple-200">
+                    JSON
+                  </Badge>
+                  <div className="flex items-center space-x-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={`h-6 px-2 flex-shrink-0 transition-colors ${
+                        isCopied ? 'bg-green-100 text-green-700' : ''
+                      }`}
+                      onClick={() => copyToClipboard(JSON.stringify(parsedJson, null, 2), copyFeedbackKey)}
+                      title={isCopied ? "Copied!" : "Copy JSON to clipboard"}
+                    >
+                      {isCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 flex-shrink-0"
+                      onClick={() => {
+                        setSelectedJson(parsedJson)
+                        setSelectedJsonColumnName(columnName)
+                      }}
+                      title="View JSON"
+                    >
+                      <Eye className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+                {/* Preview of JSON content */}
+                <div className="text-xs text-neutral-600 dark:text-neutral-400 font-mono">
+                  <pre className="bg-neutral-50 dark:bg-neutral-800 dark:text-neutral-200 p-1 rounded overflow-hidden whitespace-pre-wrap break-all">
+                    {value.length > 80 ? `${value.substring(0, 80)}...` : value}
+                  </pre>
+                </div>
+              </div>
+            )
+          }
+        } catch (e) {
+          // Not valid JSON, fall through to regular string handling
+        }
+      }
+      
       // Check if this is a document field and it has substantial content
       if (isDocumentColumn(columnName) && value.length > 20) {
         // Create a unique identifier for this document field
@@ -205,7 +337,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               </div>
             </div>
             {/* Preview of document content */}
-            <div className="text-sm text-neutral-600 truncate">
+            <div className="text-sm text-neutral-600 dark:text-neutral-400 truncate">
               {value.length > 100 ? `${value.substring(0, 100)}...` : value}
             </div>
           </div>
@@ -229,6 +361,57 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
 
     if (typeof value === 'object') {
       const jsonString = JSON.stringify(value, null, 1)
+      
+      // Check if this is a JSON/metadata column that should have enhanced viewing
+      if (isJsonColumn(columnName)) {
+        const uniqueId = rowData?.id || rowData?.uuid || rowData?._id || `row-${rowIndex}`
+        const copyFeedbackKey = `table-json-${uniqueId}-${columnName}`
+        const isCopied = copiedStates.has(copyFeedbackKey)
+        
+        return (
+          <div className="space-y-2 min-w-0 max-w-full">
+            {/* Header with JSON info and controls */}
+            <div className="flex items-center space-x-2 min-w-0">
+              <Badge variant="outline" className="text-xs flex-shrink-0 bg-purple-50 text-purple-700 border-purple-200">
+                JSON
+              </Badge>
+              <div className="flex items-center space-x-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={`h-6 px-2 flex-shrink-0 transition-colors ${
+                    isCopied ? 'bg-green-100 text-green-700' : ''
+                  }`}
+                  onClick={() => copyToClipboard(JSON.stringify(value, null, 2), copyFeedbackKey)}
+                  title={isCopied ? "Copied!" : "Copy JSON to clipboard"}
+                >
+                  {isCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 flex-shrink-0"
+                  onClick={() => {
+                    setSelectedJson(value)
+                    setSelectedJsonColumnName(columnName)
+                  }}
+                  title="View JSON"
+                >
+                  <Eye className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+            {/* Preview of JSON content */}
+            <div className="text-xs text-neutral-600 dark:text-neutral-400 font-mono">
+              <pre className="bg-neutral-50 dark:bg-neutral-800 dark:text-neutral-200 p-1 rounded overflow-hidden whitespace-pre-wrap break-all">
+                {jsonString.length > 80 ? `${jsonString.substring(0, 80)}...` : jsonString}
+              </pre>
+            </div>
+          </div>
+        )
+      }
+      
+      // Default object handling for non-JSON columns
       return (
         <div className="min-w-0 max-w-full">
           <pre 
@@ -269,6 +452,14 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
     // Check for common document column names
     const documentColumnNames = ['document', 'content', 'text', 'page_content', 'body']
     return documentColumnNames.some(name => 
+      columnName.toLowerCase().includes(name.toLowerCase())
+    )
+  }
+  
+  const isJsonColumn = (columnName: string) => {
+    // Check for common JSON/metadata column names
+    const jsonColumnNames = ['metadata', 'cmetadata', 'meta', 'json_data', 'properties', 'attributes']
+    return jsonColumnNames.some(name => 
       columnName.toLowerCase().includes(name.toLowerCase())
     )
   }
@@ -322,17 +513,19 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
   }
 
   const columns = Object.keys(data.data[0] || {})
+  const visibleColumns = columns.filter(col => !hiddenColumns.has(col))
 
   return (
-    <div className="h-full flex flex-col bg-white">
+    <div className="h-full flex flex-col bg-white dark:bg-neutral-950">
       {/* Controls - Fixed Header */}
-      <div className="flex items-center justify-between p-4 border-b border-neutral-200 bg-white flex-shrink-0">
+      <div className="p-4 border-b border-neutral-200 dark:border-neutral-800 bg-gradient-to-r from-white to-slate-50 dark:from-neutral-900 dark:to-neutral-950 flex-shrink-0 space-y-3">
+        <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <h3 className="font-medium text-neutral-900 flex items-center flex-wrap gap-2">
+          <h3 className="font-medium text-neutral-900 dark:text-neutral-100 flex items-center flex-wrap gap-2">
             <span>Table Data</span>
-            {selectedCollectionName && <span className="text-neutral-400">›</span>}
+            {selectedCollectionName && <span className="text-neutral-400 dark:text-neutral-500">›</span>}
             {selectedCollectionName && (
-              <span className="text-blue-700 font-medium" title={selectedCollectionName}>{selectedCollectionName}</span>
+              <span className="text-blue-700 dark:text-blue-400 font-medium" title={selectedCollectionName}>{selectedCollectionName}</span>
             )}
           </h3>
           <Badge variant="secondary" title={selectedCollectionId ? `Collection ID: ${selectedCollectionId}` : undefined}>
@@ -342,7 +535,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
 
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
-            <span className="text-sm text-neutral-600">Rows per page:</span>
+            <span className="text-sm text-neutral-600 dark:text-neutral-400 dark:text-neutral-300">Rows per page:</span>
             <Select value={pageSize.toString()} onValueChange={(value) => {
               setPageSize(Number(value))
               setCurrentPage(1)
@@ -360,7 +553,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
           </div>
 
           <div className="flex items-center space-x-2">
-            <Label htmlFor="sort-by" className="text-sm text-neutral-600">
+            <Label htmlFor="sort-by" className="text-sm text-neutral-600 dark:text-neutral-400 dark:text-neutral-300">
               Sort By{selectedCollectionId ? ' (Collection)' : ''}:
             </Label>
             <Select value={sortBy} onValueChange={(value) => {
@@ -402,7 +595,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
 
           {sortBy && sortBy !== 'none' && (
             <div className="flex items-center space-x-2">
-              <Label htmlFor="sort-order" className="text-sm text-neutral-600">Order:</Label>
+              <Label htmlFor="sort-order" className="text-sm text-neutral-600 dark:text-neutral-400">Order:</Label>
               <Select value={sortOrder} onValueChange={(value) => setSortOrder(value as 'asc' | 'desc')}>
                 <SelectTrigger className="w-20 h-8">
                   <SelectValue />
@@ -414,18 +607,61 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               </Select>
             </div>
           )}
-
-
+        </div>
+      </div>
+        
+        {/* Quick Actions Bar */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowColumnManager(true)}
+              className="h-8 hover-lift"
+            >
+              <Columns className="h-3.5 w-3.5 mr-2" />
+              Manage Columns
+            </Button>
+            
+            {Object.keys(columnFilters).length > 0 && (
+              <Badge variant="secondary" className="cursor-pointer hover:bg-neutral-200" onClick={() => setColumnFilters({})}>
+                {Object.keys(columnFilters).length} filter{Object.keys(columnFilters).length > 1 ? 's' : ''} active
+                <X className="h-3 w-3 ml-1" />
+              </Badge>
+            )}
+            
+            {hiddenColumns.size > 0 && (
+              <Badge variant="outline" className="text-xs">
+                {hiddenColumns.size} column{hiddenColumns.size > 1 ? 's' : ''} hidden
+              </Badge>
+            )}
+          </div>
+          
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="secondary" className="font-mono">
+                {visibleColumns.length}/{columns.length} cols
+              </Badge>
+              <Badge variant="outline" className="font-mono">
+                {data.data.length} rows
+              </Badge>
+              {selectedCollectionId && (
+                <Badge variant="default" className="bg-blue-600 text-xs">
+                  Collection View
+                </Badge>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* Table Container - Scrollable */}
-      <div className="flex-1 overflow-hidden bg-white">
-        <div className="h-full w-full overflow-auto">
+      <div className="flex-1 overflow-hidden bg-white dark:bg-neutral-950">
+        <div className="h-full w-full overflow-auto custom-scrollbar">
           <Table>
-            <TableHeader className="sticky top-0 bg-white border-b z-10">
+            <TableHeader className="sticky top-0 bg-white dark:bg-neutral-900 border-b dark:border-neutral-800 z-10">
               <TableRow>
-                {columns.map((column) => (
+                {visibleColumns.map((column) => (
                   <TableHead key={column} className="font-medium whitespace-nowrap min-w-[150px] max-w-[250px] px-4 py-3">
                     <div className="flex items-center space-x-2">
                       <span className="font-mono text-sm truncate">{column}</span>
@@ -439,6 +675,11 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                           document
                         </Badge>
                       )}
+                      {isJsonColumn(column) && (
+                        <Badge variant="outline" className="text-xs flex-shrink-0 bg-purple-50 text-purple-700 border-purple-200">
+                          json
+                        </Badge>
+                      )}
                     </div>
                   </TableHead>
                 ))}
@@ -446,8 +687,8 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
             </TableHeader>
             <TableBody>
               {data.data.map((row, index) => (
-                <TableRow key={index} className="hover:bg-neutral-50">
-                  {columns.map((column) => (
+                <TableRow key={index} className="hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors">
+                  {visibleColumns.map((column) => (
                     <TableCell key={column} className="min-w-[150px] max-w-[250px] px-4 py-3 align-top">
                       <div className="overflow-hidden">
                         {formatCellValue(row[column], column, isVectorColumn(column), row, index)}
@@ -462,8 +703,8 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
       </div>
 
       {/* Pagination - Fixed Footer */}
-      <div className="flex items-center justify-between p-4 border-t border-neutral-200 bg-white flex-shrink-0">
-        <div className="text-sm text-neutral-600">
+      <div className="flex items-center justify-between p-4 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 flex-shrink-0">
+        <div className="text-sm text-neutral-600 dark:text-neutral-400">
           Showing {((currentPage - 1) * pageSize) + 1} to {Math.min(currentPage * pageSize, data.total_count)} of {data.total_count} rows
         </div>
         
@@ -478,7 +719,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
           </Button>
           
           <div className="flex items-center space-x-2">
-            <span className="text-sm text-neutral-600">Page</span>
+            <span className="text-sm text-neutral-600 dark:text-neutral-400">Page</span>
             <Input
               type="number"
               min="1"
@@ -492,7 +733,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               }}
               className="w-16 h-8 text-center text-sm"
             />
-            <span className="text-sm text-neutral-600">of {totalPages}</span>
+            <span className="text-sm text-neutral-600 dark:text-neutral-400">of {totalPages}</span>
           </div>
           
           <Button
@@ -515,14 +756,14 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
           {selectedVector && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                <Badge variant="outline" className="bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800">
                   {selectedVector.length} dimensions
                 </Badge>
                 <Button 
                   variant="outline" 
                   size="sm"
                   className={`transition-colors ${
-                    copiedStates.has('dialog-vector-full') ? 'bg-green-100 text-green-700 border-green-300' : ''
+                    copiedStates.has('dialog-vector-full') ? 'bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300 border-green-300 dark:border-green-800' : ''
                   }`}
                   onClick={() => copyToClipboard(JSON.stringify(selectedVector), 'dialog-vector-full')}
                 >
@@ -532,19 +773,19 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               </div>
               
               <div className="space-y-3">
-                <div className="text-sm text-neutral-600">
+                <div className="text-sm text-neutral-600 dark:text-neutral-400">
                   Vector values (showing all {selectedVector.length} dimensions):
                 </div>
                 
                 {/* Improved grid with better spacing and readability */}
-                <div className="max-h-80 overflow-auto border rounded-lg bg-neutral-50">
+                <div className="max-h-80 overflow-auto border dark:border-neutral-700 rounded-lg bg-neutral-50 dark:bg-neutral-800">
                   <div className="grid grid-cols-4 gap-3 p-4 font-mono text-xs">
                     {selectedVector.map((value, index) => (
-                      <div key={index} className="flex flex-col items-center p-3 bg-white rounded border hover:bg-blue-50 hover:border-blue-200 transition-all duration-200 cursor-default">
+                      <div key={index} className="flex flex-col items-center p-3 bg-white dark:bg-neutral-900 rounded border dark:border-neutral-700 hover:bg-blue-50 dark:hover:bg-blue-950 hover:border-blue-200 dark:hover:border-blue-800 transition-all duration-200 cursor-default">
                         <div className="text-xs text-neutral-400 mb-1 font-semibold">
                           [{index}]
                         </div>
-                        <div className="font-medium text-neutral-800 text-center break-all">
+                        <div className="font-medium text-neutral-800 dark:text-neutral-200 text-center break-all">
                           {typeof value === 'number' ? value.toFixed(6) : value}
                         </div>
                       </div>
@@ -554,7 +795,7 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                 
                 {/* Additional format options */}
                 <div className="flex items-center justify-center pt-2 border-t">
-                  <div className="text-xs text-neutral-500">
+                  <div className="text-xs text-neutral-500 dark:text-neutral-400">
                     Hover over values to highlight • Values shown with 6 decimal precision
                   </div>
                 </div>
@@ -608,10 +849,10 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               
               {showTokenVisualizer ? (
                 <div className="space-y-3">
-                  <div className="text-sm text-neutral-600">
+                  <div className="text-sm text-neutral-600 dark:text-neutral-400">
                     Token visualization:
                   </div>
-                  <div className="h-96 border rounded-lg bg-white">
+                  <div className="h-96 border dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900">
                     <TokenVisualizer 
                       tokens={tokenizeText(selectedDocument)} 
                       theme="light"
@@ -620,12 +861,12 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="text-sm text-neutral-600">
+                  <div className="text-sm text-neutral-600 dark:text-neutral-400">
                     Document content:
                   </div>
                   
                   {/* Document content with good readability */}
-                  <div className="h-96 overflow-y-auto overflow-x-hidden border rounded-lg bg-white p-4">
+                  <div className="h-96 overflow-y-auto overflow-x-hidden border dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 p-4">
                     <div className="whitespace-pre-wrap break-words text-sm">
                       {selectedDocument}
                     </div>
@@ -641,6 +882,148 @@ export function TableData({ schema, table, metadata }: TableDataProps) {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* JSON Viewer Dialog */}
+      <Dialog open={!!selectedJson} onOpenChange={() => {
+        setSelectedJson(null)
+        setSelectedJsonColumnName('')
+      }}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>JSON Data - {selectedJsonColumnName}</DialogTitle>
+          </DialogHeader>
+          {selectedJson && (
+            <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
+              <div className="flex items-center justify-between">
+                <Badge variant="outline" className="bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800">
+                  {Object.keys(selectedJson).length} {Object.keys(selectedJson).length === 1 ? 'field' : 'fields'}
+                </Badge>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className={`transition-colors ${
+                    copiedStates.has('dialog-json-full') ? 'bg-green-100 dark:bg-green-950 text-green-700 dark:text-green-300 border-green-300 dark:border-green-800' : ''
+                  }`}
+                  onClick={() => copyToClipboard(JSON.stringify(selectedJson, null, 2), 'dialog-json-full')}
+                >
+                  {copiedStates.has('dialog-json-full') ? <Check className="h-4 w-4 mr-2" /> : <Copy className="h-4 w-4 mr-2" />}
+                  {copiedStates.has('dialog-json-full') ? 'Copied!' : 'Copy JSON'}
+                </Button>
+              </div>
+              
+              <div className="flex-1 overflow-auto border dark:border-neutral-700 rounded-lg bg-neutral-900 dark:bg-neutral-950">
+                <pre className="p-4 text-sm font-mono overflow-x-auto">
+                  <code className="language-json">
+                    {formatJsonWithColors(selectedJson)}
+                  </code>
+                </pre>
+              </div>
+              
+              {/* Info footer */}
+              <div className="flex items-center justify-between pt-2 border-t">
+                <div className="text-xs text-neutral-500 dark:text-neutral-400">
+                  {Object.keys(selectedJson).length} fields • {JSON.stringify(selectedJson).length} characters
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Column Manager Dialog */}
+      <Dialog open={showColumnManager} onOpenChange={setShowColumnManager}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Columns className="h-5 w-5" />
+              Manage Columns
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                Show or hide columns from the table view
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setHiddenColumns(new Set())}
+                  disabled={hiddenColumns.size === 0}
+                >
+                  Show All
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setHiddenColumns(new Set(columns))}
+                  disabled={hiddenColumns.size === columns.length}
+                >
+                  Hide All
+                </Button>
+              </div>
+            </div>
+            
+            <div className="border rounded-lg max-h-96 overflow-y-auto custom-scrollbar">
+              <div className="divide-y">
+                {columns.map((column) => {
+                  const isHidden = hiddenColumns.has(column)
+                  const isVector = isVectorColumn(column)
+                  const isDocument = isDocumentColumn(column)
+                  const isJson = isJsonColumn(column)
+                  
+                  return (
+                    <div
+                      key={column}
+                      className="flex items-center justify-between p-3 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <Button
+                          variant={isHidden ? "ghost" : "secondary"}
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                          onClick={() => {
+                            const newHidden = new Set(hiddenColumns)
+                            if (isHidden) {
+                              newHidden.delete(column)
+                            } else {
+                              newHidden.add(column)
+                            }
+                            setHiddenColumns(newHidden)
+                          }}
+                        >
+                          {isHidden ? <Eye className="h-3.5 w-3.5 opacity-30" /> : <Eye className="h-3.5 w-3.5" />}
+                        </Button>
+                        <span className="font-mono text-sm truncate">{column}</span>
+                        <div className="flex gap-1">
+                          {isVector && (
+                            <Badge variant="secondary" className="text-xs">vector</Badge>
+                          )}
+                          {isDocument && (
+                            <Badge variant="outline" className="text-xs bg-green-50 text-green-700">doc</Badge>
+                          )}
+                          {isJson && (
+                            <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700">json</Badge>
+                          )}
+                        </div>
+                      </div>
+                      <Badge variant={isHidden ? "outline" : "default"} className="text-xs">
+                        {isHidden ? 'Hidden' : 'Visible'}
+                      </Badge>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-xs text-blue-700">
+                💡 Tip: Hiding large vector or document columns can improve table rendering performance
+              </p>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiClient } from '@/lib/api'
 import { useNotifications } from '@/components/providers/notification-provider'
+import { ThemeToggle } from '@/components/ui/theme-toggle'
 
 export function Header() {
   const { isConnected, databaseInfo, reset: resetDatabase, selectedTable, selectedCollectionId, tables } = useDatabaseStore()
@@ -71,70 +72,74 @@ export function Header() {
   }
 
   return (
-    <header className="border-b border-neutral-200 bg-white px-6 py-4">
+    <header className="border-b border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-2 animate-fade-in">
       <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-600">
-            <Database className="h-5 w-5 text-white" />
+        <div className="flex items-center space-x-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 dark:bg-blue-500">
+            <Database className="h-4 w-4 text-white" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-neutral-900">
+            <h1 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
               PGVector Workbench
             </h1>
-            <p className="text-sm text-neutral-500">
-              PostgreSQL vector database visualization tool
+            <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              PostgreSQL vector database tool
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
+          <ThemeToggle />
           {user && (
-            <div className="flex items-center gap-2 text-sm text-neutral-600">
-              <UserIcon className="h-4 w-4" /> {user.username}
+            <div className="flex items-center gap-1.5 text-xs text-neutral-600 dark:text-neutral-300">
+              <UserIcon className="h-3.5 w-3.5" /> {user.username}
             </div>
           )}
           {isConnected && databaseInfo && (
             <>
-              <div className="flex items-center space-x-2 text-sm">
+              <div className="flex items-center space-x-2 text-xs">
                 <Badge variant="secondary" className="font-mono">
                   {databaseInfo.database}
                 </Badge>
                 {selectedCollectionName && (
                   <>
                     <span className="text-neutral-300">›</span>
-                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200" title={selectedCollectionName}>
-                      {selectedCollectionName}
+                    <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200 h-5 px-1.5" title={selectedCollectionName}>
+                      {selectedCollectionName.length > 20 ? selectedCollectionName.substring(0, 20) + '...' : selectedCollectionName}
                     </Badge>
                   </>
                 )}
                 {databaseInfo.pgvector_installed && (
-                  <Badge variant="outline" className="text-green-600 border-green-200">
+                  <Badge variant="outline" className="text-green-600 border-green-200 text-[10px] h-5 px-1.5">
                     pgvector
                   </Badge>
                 )}
               </div>
               
-              <Button variant="outline" size="sm" onClick={handleDisconnect} disabled={disconnectMutation.isPending}>
+              <Button variant="outline" size="sm" className="h-7 text-xs px-2" onClick={handleDisconnect} disabled={disconnectMutation.isPending}>
                 {disconnectMutation.isPending ? 'Disconnecting...' : 'Disconnect'}
               </Button>
             </>
           )}
           
-          <div className="flex items-center space-x-4 text-sm">
+          <div className="flex items-center space-x-3 text-xs">
             {isConnected ? (
-              <div className="flex items-center space-x-2 text-green-600">
-                <Wifi className="h-4 w-4" />
-                <span>Connected</span>
+              <div className="flex items-center space-x-1.5 text-green-600">
+                <div className="relative">
+                  <Wifi className="h-3.5 w-3.5" />
+                  <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 bg-green-500 rounded-full animate-pulse-glow"></span>
+                </div>
+                <span className="font-medium">Connected</span>
               </div>
             ) : (
-              <div className="flex items-center space-x-2 text-neutral-500">
-                <WifiOff className="h-4 w-4" />
+              <div className="flex items-center space-x-1.5 text-neutral-500">
+                <WifiOff className="h-3.5 w-3.5" />
                 <span>Disconnected</span>
               </div>
             )}
             {token && (
-              <Button variant="ghost" size="sm" onClick={handleLogout} disabled={logoutMutation.isPending} className="text-neutral-500 hover:text-red-600">
-                <LogOut className="h-4 w-4 mr-1" /> {logoutMutation.isPending ? 'Logging out...' : 'Logout'}
+              <Button variant="ghost" size="sm" onClick={handleLogout} disabled={logoutMutation.isPending} className="text-neutral-500 dark:text-neutral-400 hover:text-red-600 dark:hover:text-red-400 h-7 text-xs px-2">
+                <LogOut className="h-3.5 w-3.5 mr-1" /> {logoutMutation.isPending ? 'Logging out...' : 'Logout'}
               </Button>
             )}
           </div>

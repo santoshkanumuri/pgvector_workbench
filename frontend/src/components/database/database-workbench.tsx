@@ -10,14 +10,52 @@ import { TableView } from './table-view'
 import { Header } from './header'
 import { useNotifications } from '@/components/providers/notification-provider'
 import { Button } from '@/components/ui/button'
-import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { ChevronLeft, ChevronRight, PanelLeftClose, PanelLeftOpen, Command } from 'lucide-react'
+import { useKeyboard } from '@/hooks/use-keyboard'
+import { CommandPalette } from '@/components/ui/command-palette'
+import { Badge } from '@/components/ui/badge'
+import { ProgressBar } from '@/components/ui/progress-bar'
+import { KeyboardShortcutsHelp } from '@/components/ui/keyboard-shortcuts-help'
+import { HelpCircle } from 'lucide-react'
 
 export function DatabaseWorkbench() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false)
   const { isConnected, selectedTable, isLoadingTables, reset: resetDatabase } = useDatabaseStore()
   const { token, activeSessionId } = useAuthStore()
   const { setConnectionState, setTables, setLoadingTables } = useDatabaseStore()
   const { addNotification } = useNotifications()
+
+  // Keyboard shortcuts
+  useKeyboard([
+    {
+      key: 'k',
+      ctrl: true,
+      callback: () => setCommandPaletteOpen(true),
+      description: 'Open command palette'
+    },
+    {
+      key: 'b',
+      ctrl: true,
+      callback: () => setSidebarCollapsed(prev => !prev),
+      description: 'Toggle sidebar'
+    },
+    {
+      key: '?',
+      shift: true,
+      callback: () => setShortcutsHelpOpen(true),
+      description: 'Show keyboard shortcuts'
+    },
+    {
+      key: 'Escape',
+      callback: () => {
+        setCommandPaletteOpen(false)
+        setShortcutsHelpOpen(false)
+      },
+      description: 'Close dialogs'
+    }
+  ], isConnected)
 
   // Watch for auth state changes and reset database accordingly
   useEffect(() => {
@@ -93,7 +131,43 @@ export function DatabaseWorkbench() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {/* Loading Progress Bar */}
+      <ProgressBar loading={isLoadingTables} />
+      
       <Header />
+      
+      {/* Command Palette */}
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsHelp open={shortcutsHelpOpen} onOpenChange={setShortcutsHelpOpen} />
+      
+      {/* Floating Action Buttons - Show when connected */}
+      {isConnected && (
+        <div className="fixed bottom-4 left-4 z-40 flex flex-col gap-2">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => setCommandPaletteOpen(true)}
+            className="shadow-lg bg-white/95 dark:bg-neutral-800/95 backdrop-blur-sm border-neutral-300 dark:border-neutral-700 hover:bg-white dark:hover:bg-neutral-800 hover:shadow-xl transition-all duration-200 opacity-80 hover:opacity-100"
+            title="Open command palette"
+          >
+            <Command className="h-3 w-3 mr-2" />
+            <span className="text-xs">Press</span>
+            <Badge variant="outline" className="text-xs ml-1">Ctrl+K</Badge>
+          </Button>
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => setShortcutsHelpOpen(true)}
+            className="shadow-lg bg-white/95 dark:bg-neutral-800/95 backdrop-blur-sm border-neutral-300 dark:border-neutral-700 hover:bg-white dark:hover:bg-neutral-800 hover:shadow-xl transition-all duration-200 opacity-80 hover:opacity-100"
+            title="Show keyboard shortcuts"
+          >
+            <HelpCircle className="h-3 w-3 mr-2" />
+            <span className="text-xs">Help</span>
+          </Button>
+        </div>
+      )}
       
       <div className="flex flex-1 overflow-hidden min-h-0 pr-[10px]">
         {!token || !activeSessionId ? (
@@ -102,7 +176,7 @@ export function DatabaseWorkbench() {
           </div>
         ) : !isConnected ? (
           <div className="flex flex-1 items-center justify-center p-6">
-            <div className="text-center text-sm text-neutral-600 max-w-md">
+            <div className="text-center text-sm text-neutral-600 dark:text-neutral-400 max-w-md">
               {isLoadingTables ? (
                 <div className="space-y-2">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
@@ -125,9 +199,9 @@ export function DatabaseWorkbench() {
           <>
             {/* Collapsible Sidebar */}
             <div className={`relative transition-all duration-300 ease-in-out ${
-              sidebarCollapsed ? 'w-12' : 'w-72 min-w-64 max-w-80'
+              sidebarCollapsed ? 'w-12' : 'w-64 min-w-56'
             }`}>
-              <div className={`h-full border-r border-slate-200 bg-gradient-to-b from-white to-slate-50 overflow-hidden ${
+              <div className={`h-full border-r border-slate-200 dark:border-neutral-800 bg-gradient-to-b from-white to-slate-50 dark:from-neutral-900 dark:to-neutral-950 overflow-hidden ${
                 sidebarCollapsed ? 'w-12' : 'w-full'
               }`}>
                 {!sidebarCollapsed && <TablesList />}
@@ -136,12 +210,12 @@ export function DatabaseWorkbench() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className={`absolute -right-3 top-4 h-6 w-6 rounded-full border border-slate-200 bg-white shadow-sm hover:bg-slate-50 transition-all duration-200 z-10 ${
+                  className={`absolute -right-3 top-4 h-6 w-6 rounded-full border border-slate-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 shadow-sm hover:bg-slate-50 dark:hover:bg-neutral-700 transition-all duration-200 z-10 ${
                     sidebarCollapsed ? 'rotate-180' : ''
                   }`}
                   onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
                 >
-                  <ChevronLeft className="h-3 w-3" />
+                  <ChevronLeft className="h-3 w-3 dark:text-neutral-300" />
                 </Button>
                 
                 {/* Collapsed Sidebar Content */}
@@ -151,7 +225,7 @@ export function DatabaseWorkbench() {
                       <span className="text-white text-xs font-bold">DB</span>
                     </div>
                     <div className="w-0.5 h-8 bg-gradient-to-b from-slate-200 to-slate-300"></div>
-                    <div className="text-xs text-slate-500 text-center px-1 leading-tight">
+                    <div className="text-xs text-slate-500 dark:text-neutral-400 text-center px-1 leading-tight">
                       {isConnected ? 'Connected' : 'Disconnected'}
                     </div>
                   </div>
@@ -160,7 +234,7 @@ export function DatabaseWorkbench() {
             </div>
             
             {/* Main Content */}
-            <div className="flex-1 bg-gradient-to-br from-slate-50 to-white overflow-hidden min-w-0">
+            <div className="flex-1 bg-gradient-to-br from-slate-50 to-white dark:from-neutral-950 dark:to-neutral-900 overflow-hidden min-w-0">
               {selectedTable ? (
                 <TableView />
               ) : (
@@ -169,10 +243,10 @@ export function DatabaseWorkbench() {
                     <div className="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
                       <span className="text-white text-xl font-bold">DB</span>
                     </div>
-                    <h3 className="text-lg font-medium text-slate-800 mb-2">
+                    <h3 className="text-lg font-medium text-slate-800 dark:text-neutral-100 mb-2">
                       Select a Collection
                     </h3>
-                    <p className="text-sm text-slate-600 max-w-md">
+                    <p className="text-sm text-slate-600 dark:text-neutral-400 max-w-md">
                       Choose a table from the sidebar to view its vector data and explore your database
                     </p>
                   </div>

@@ -32,14 +32,15 @@ class ConnectionManager:
                 # Create new connection pool with optimized settings
                 self._connection_pool = await asyncpg.create_pool(
                     connection_string,
-                    min_size=2,  # Minimum connections for responsiveness
-                    max_size=20,  # Increased max for concurrent users
+                    min_size=1,  # Reduced minimum connections
+                    max_size=8,  # Reduced max connections to prevent exhaustion
                     max_queries=50000,  # Allow more queries per connection
-                    max_inactive_connection_lifetime=300,  # 5 minutes
-                    command_timeout=60,  # Increased timeout for large queries
+                    max_inactive_connection_lifetime=180,  # 3 minutes - shorter lifetime
+                    command_timeout=30,  # Reduced timeout for better responsiveness
                     server_settings={
                         'application_name': 'pgvector_workbench',
-                        'statement_timeout': '300000',  # 5 minute statement timeout
+                        'statement_timeout': '60000',  # 1 minute statement timeout
+                        'idle_in_transaction_session_timeout': '30000',  # 30 second idle timeout
                     }
                 )
                 
@@ -99,11 +100,17 @@ class ConnectionManager:
             # Update activity timestamp
             self.update_activity()
             
-            # Get connection with timeout
-            async with asyncio.timeout(30):  # 30 second timeout to acquire connection
+            # Get connection with shorter timeout to prevent hanging
+            async with asyncio.timeout(10):  # 10 second timeout to acquire connection
                 async with self._connection_pool.acquire() as connection:
                     yield connection
         except asyncio.TimeoutError:
+            # Log pool stats for debugging
+            if self._connection_pool:
+                print(f"Pool stats - Size: {self._connection_pool.get_size()}, "
+                      f"Min: {self._connection_pool.get_min_size()}, "
+                      f"Max: {self._connection_pool.get_max_size()}, "
+                      f"Free: {self._connection_pool.get_size() - self._connection_pool.get_idle_size()}")
             raise TimeoutError("Timeout acquiring database connection - pool may be exhausted", 408)
         except Exception as e:
             raise ConnectionError(f"Failed to acquire database connection: {str(e)}", 500)

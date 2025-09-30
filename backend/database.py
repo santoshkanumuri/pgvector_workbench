@@ -34,6 +34,17 @@ class DatabaseManager:
         except Exception:
             self._metadata_cache_ttl = 30
     
+    async def _setup_connection(self, connection):
+        """Setup callback for new connections to optimize performance"""
+        try:
+            # Set connection-level parameters for better performance
+            await connection.execute("SET work_mem = '16MB'")
+            await connection.execute("SET maintenance_work_mem = '64MB'")
+            await connection.execute("SET effective_cache_size = '1GB'")
+            await connection.execute("SET random_page_cost = 1.1")
+        except Exception as e:
+            print(f"Warning: Failed to optimize connection settings: {e}")
+
     async def connect(self, connection_string: str) -> bool:
         """Connect to PostgreSQL database and test connection with proper error handling"""
         async with self._connection_lock:
@@ -46,14 +57,16 @@ class DatabaseManager:
                 # Create new connection pool with optimized settings
                 self._connection_pool = await asyncpg.create_pool(
                     connection_string,
-                    min_size=2,  # Minimum connections for responsiveness
-                    max_size=20,  # Increased max for concurrent users
+                    min_size=1,  # Reduced minimum connections
+                    max_size=10,  # Reduced max connections to prevent exhaustion
                     max_queries=50000,  # Allow more queries per connection
-                    max_inactive_connection_lifetime=300,  # 5 minutes
-                    command_timeout=60,  # Increased timeout for large queries
+                    max_inactive_connection_lifetime=180,  # 3 minutes - shorter lifetime
+                    command_timeout=30,  # Reduced timeout for better responsiveness
+                    setup=self._setup_connection,  # Add connection setup
                     server_settings={
                         'application_name': 'pgvector_workbench',
-                        'statement_timeout': '300000',  # 5 minute statement timeout
+                        'statement_timeout': '60000',  # 1 minute statement timeout
+                        'idle_in_transaction_session_timeout': '30000',  # 30 second idle timeout
                     }
                 )
                 
@@ -119,11 +132,17 @@ class DatabaseManager:
             # Update activity timestamp
             self.update_activity()
             
-            # Get connection with timeout
-            async with asyncio.timeout(30):  # 30 second timeout to acquire connection
+            # Get connection with shorter timeout to prevent hanging
+            async with asyncio.timeout(10):  # 10 second timeout to acquire connection
                 async with self._connection_pool.acquire() as connection:
                     yield connection
         except asyncio.TimeoutError:
+            # Log pool stats for debugging
+            if self._connection_pool:
+                print(f"Pool stats - Size: {self._connection_pool.get_size()}, "
+                      f"Min: {self._connection_pool.get_min_size()}, "
+                      f"Max: {self._connection_pool.get_max_size()}, "
+                      f"Free: {self._connection_pool.get_size() - self._connection_pool.get_idle_size()}")
             raise Exception("Timeout acquiring database connection - pool may be exhausted")
         except Exception as e:
             raise Exception(f"Failed to acquire database connection: {str(e)}")
@@ -134,26 +153,47 @@ class DatabaseManager:
             return {"connected": False, "error": "No connection established"}
         
         try:
-            async with self.get_connection() as conn:
-                # Get basic database info
-                db_version = await conn.fetchval("SELECT version()")
-                db_name = await conn.fetchval("SELECT current_database()")
-                
-                # Check if pgvector extension exists
-                pgvector_exists = await conn.fetchval("""
-                    SELECT EXISTS(
-                        SELECT 1 FROM pg_extension WHERE extname = 'vector'
-                    )
-                """)
-                
-                return {
-                    "connected": True,
-                    "database": db_name,
-                    "version": db_version,
-                    "pgvector_installed": pgvector_exists
-                }
+            # Use a shorter timeout for connection test to avoid hanging
+            async with asyncio.timeout(5):
+                async with self.get_connection() as conn:
+                    # Get basic database info
+                    db_version = await conn.fetchval("SELECT version()")
+                    db_name = await conn.fetchval("SELECT current_database()")
+                    
+                    # Check if pgvector extension exists
+                    pgvector_exists = await conn.fetchval("""
+                        SELECT EXISTS(
+                            SELECT 1 FROM pg_extension WHERE extname = 'vector'
+                        )
+                    """)
+                    
+                    return {
+                        "connected": True,
+                        "database": db_name,
+                        "version": db_version,
+                        "pgvector_installed": pgvector_exists,
+                        "pool_size": self._connection_pool.get_size() if self._connection_pool else 0,
+                        "pool_idle": self._connection_pool.get_idle_size() if self._connection_pool else 0
+                    }
+        except asyncio.TimeoutError:
+            return {"connected": False, "error": "Connection test timed out"}
         except Exception as e:
             return {"connected": False, "error": str(e)}
+
+    def get_pool_stats(self) -> Dict[str, Any]:
+        """Get connection pool statistics for monitoring"""
+        if not self._connection_pool:
+            return {"status": "no_pool"}
+        
+        return {
+            "status": "active",
+            "size": self._connection_pool.get_size(),
+            "max_size": self._connection_pool.get_max_size(),
+            "min_size": self._connection_pool.get_min_size(),
+            "idle_size": self._connection_pool.get_idle_size(),
+            "active_connections": self._connection_pool.get_size() - self._connection_pool.get_idle_size(),
+            "closed": self._connection_pool._closed
+        }
     
     async def get_tables_with_vectors(self) -> List[Dict[str, Any]]:
         """Get all tables that contain vector columns with relationship detection"""
@@ -821,19 +861,48 @@ class DatabaseManager:
                         "document_column": None
                     }
                     
-                    # Get document dates if available
+                    # Get document dates if available (check if created_at column exists first)
                     try:
-                        dates_query = f"""
-                        SELECT 
-                            MIN(created_at) as oldest_date,
-                            MAX(created_at) as latest_date
-                        FROM "{schema}"."{table}"
-                        WHERE collection_id = $1
+                        # First check if created_at column exists
+                        check_column_query = """
+                        SELECT column_name FROM information_schema.columns 
+                        WHERE table_schema = $1 AND table_name = $2 AND column_name = 'created_at'
                         """
-                        dates = await conn.fetchrow(dates_query, collection_id)
-                        if dates and dates['oldest_date']:
-                            collection_stats["oldest_document_date"] = dates['oldest_date'].isoformat() if dates['oldest_date'] else None
-                            collection_stats["latest_document_date"] = dates['latest_date'].isoformat() if dates['latest_date'] else None
+                        has_created_at = await conn.fetchval(check_column_query, schema, table)
+                        
+                        if has_created_at:
+                            dates_query = f"""
+                            SELECT 
+                                MIN(created_at) as oldest_date,
+                                MAX(created_at) as latest_date
+                            FROM "{schema}"."{table}"
+                            WHERE collection_id = $1
+                            """
+                            dates = await conn.fetchrow(dates_query, collection_id)
+                            if dates and dates['oldest_date']:
+                                collection_stats["oldest_document_date"] = dates['oldest_date'].isoformat() if dates['oldest_date'] else None
+                                collection_stats["latest_document_date"] = dates['latest_date'].isoformat() if dates['latest_date'] else None
+                        else:
+                            # Try other common timestamp columns
+                            for date_col in ['updated_at', 'modified_at', 'timestamp', 'date_created']:
+                                check_alt_column_query = """
+                                SELECT column_name FROM information_schema.columns 
+                                WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
+                                """
+                                has_alt_column = await conn.fetchval(check_alt_column_query, schema, table, date_col)
+                                if has_alt_column:
+                                    dates_query = f"""
+                                    SELECT 
+                                        MIN("{date_col}") as oldest_date,
+                                        MAX("{date_col}") as latest_date
+                                    FROM "{schema}"."{table}"
+                                    WHERE collection_id = $1
+                                    """
+                                    dates = await conn.fetchrow(dates_query, collection_id)
+                                    if dates and dates['oldest_date']:
+                                        collection_stats["oldest_document_date"] = dates['oldest_date'].isoformat() if dates['oldest_date'] else None
+                                        collection_stats["latest_document_date"] = dates['latest_date'].isoformat() if dates['latest_date'] else None
+                                    break
                     except Exception as e:
                         print(f"Could not get document dates: {e}")
                     

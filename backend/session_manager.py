@@ -42,7 +42,7 @@ async def init_metadata_pool():
             raise RuntimeError(
                 f"No metadata database URL provided (looked for APP_METADATA_DB_URL / DATABASE_URL / POSTGRES_URL / POSTGRES_URI). Present flags: {present}"
             )
-        _metadata_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5)
+        _metadata_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=3)
         # Run migrations (idempotent) - ensure tables exist
         async with _metadata_pool.acquire() as conn:
             # Create tables if they don't exist (safe for production)

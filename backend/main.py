@@ -15,8 +15,8 @@ async def cleanup_task():
     """Background task to clean up inactive database connections"""
     while True:
         try:
-            await asyncio.sleep(300)  # Run every 5 minutes
-            cleaned_count = await cleanup_inactive(max_idle_minutes=30)
+            await asyncio.sleep(180)  # Run every 3 minutes (more frequent)
+            cleaned_count = await cleanup_inactive(max_idle_minutes=15)  # More aggressive cleanup
             if cleaned_count > 0:
                 print(f"Background cleanup: removed {cleaned_count} inactive connections")
         except Exception as e:

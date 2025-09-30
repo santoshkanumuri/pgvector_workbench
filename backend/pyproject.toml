@@ -19,6 +19,8 @@ dependencies = [
     "python-jose==3.3.0",
     "python-multipart>=0.0.20",
     "requests>=2.32.4",
+    "scikit-learn>=1.7.2",
+    "umap-learn>=0.5.9.post2",
     "uvicorn[standard]>=0.35.0",
 ]
 
